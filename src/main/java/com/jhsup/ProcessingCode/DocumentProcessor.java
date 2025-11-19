@@ -6,6 +6,7 @@ import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.extractor.XWPFWordExtractor;
 import org.apache.poi.xslf.usermodel.XMLSlideShow;
 import org.apache.poi.xslf.usermodel.XSLFSlide;
+import java.util.concurrent.TimeUnit;
 
 import java.io.*;
 import java.util.*;
@@ -96,7 +97,11 @@ public class DocumentProcessor {
             throw new IllegalStateException("OPENAI_KEY environment variable is not set.");
         }
 
-        OkHttpClient client = new OkHttpClient();
+        OkHttpClient client = new OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS) // Wait up to 60s to connect
+            .readTimeout(30, TimeUnit.SECONDS)    // Wait up to 60s for data
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build();
         ObjectMapper mapper = new ObjectMapper();
 
         Map<String, Object> json = new HashMap<>();
@@ -190,7 +195,8 @@ public class DocumentProcessor {
                     pointId, 
                     embedding, 
                     file.getName(), // Use the actual filename from the loop
-                    i
+                    i,
+                    chunks.get(i)
                 );
                 // --------------------------------------------------------
 

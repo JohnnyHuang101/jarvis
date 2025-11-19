@@ -79,11 +79,12 @@ public class QdrantClient {
      */
     public static void insertVector(
             String collectionName, long id, List<Double> embedding,
-            String filename, int chunkIndex
+            String filename, int chunkIndex, String textContent
     ) throws Exception {
         Map<String, Object> payload = new HashMap<>();
         payload.put("filename", filename);
         payload.put("chunk_index", chunkIndex);
+        payload.put("text_content", textContent);
 
         // --- FIX STARTS HERE ---
         // 1. Create a map to hold the named vector
@@ -142,14 +143,14 @@ public class QdrantClient {
      */
     public static void upsertVectorWithCollectionCheck(
             String collectionName, int vectorSize, String distanceMetric,
-            long id, List<Double> embedding, String filename, int chunkIndex
+            long id, List<Double> embedding, String filename, int chunkIndex, String textContent
     ) throws Exception {
         if (!checkCollection(collectionName)) {
             System.out.println("Collection '" + collectionName + "' not found. Attempting to create it...");
             createCollection(collectionName, vectorSize, distanceMetric);
         }
         // Now that the collection is guaranteed to exist, perform the insertion
-        insertVector(collectionName, id, embedding, filename, chunkIndex);
+        insertVector(collectionName, id, embedding, filename, chunkIndex, textContent);
     }
 
     /**

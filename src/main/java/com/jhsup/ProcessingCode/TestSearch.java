@@ -80,14 +80,15 @@ public class TestSearch {
                 double score = (double) result.get("score");
                 Map<String, Object> payload = (Map<String, Object>) result.get("payload");
                 String filename = (String) payload.get("filename");
+                String chunk = (String) payload.get("text_content");
                 
-                System.out.printf("Score: %.4f | File: %s\n", score, filename);
+                System.out.printf("Score: %.4f | File: %s | Chunk: %s\n", score, filename,chunk);
             }
         }
     }
 
     public static void main(String[] args) throws Exception {
         // Run the search
-        searchQdrant("class_notes", "personal statement");
+        searchQdrant("class_notes", "reduction proofs");
     }
 }
