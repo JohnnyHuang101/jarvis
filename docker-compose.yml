@@ -1,0 +1,15 @@
+version: '3.8'
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333" # REST API
+      # - "6334:6334" # gRPC API
+    # --- PERSISTENCE IS HERE ---
+    volumes:
+      # Maps a folder named 'qdrant_storage' in your current directory 
+      # to the container's storage path.
+      - ./VDB_Storage:/qdrant/storage
+    # ---------------------------
+    restart: unless-stopped
