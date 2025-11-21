@@ -1,7 +1,7 @@
 maven
 langchain
 google drive open ai
-pinecone
+qdrant
 java 
 springboot
 designed local vector base
