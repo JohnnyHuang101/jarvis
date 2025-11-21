@@ -9,10 +9,10 @@ The model currently is able to process almost all file types on its own (includi
 <img width="1139" height="814" alt="Screenshot 2025-11-21 120818" src="https://github.com/user-attachments/assets/e638c92d-49ae-4dbf-9eb5-788bb1afdd9b" />
 
 
-data collection and scouting --> google api
-preprocessing and data splicing & pipeline to connect to LLM and database--> langchain, openai API
-vector embeddings and agent configs w/ multi modal processing capabilities --> openai API
-backend controllers for server hosting and other scripts --> springboot, maven, java
-frontend files server and dynamic chat layout --> ReactJS, NodeJS, Vite
-vector database --> custom Qdrant database, docker
+* data collection and scouting --> google api
+* preprocessing and data splicing & pipeline to connect to LLM and database--> langchain, openai API
+* vector embeddings and agent configs w/ multi modal processing capabilities --> openai API
+* backend controllers for server hosting and other scripts --> springboot, maven, java
+* frontend files server and dynamic chat layout --> ReactJS, NodeJS, Vite
+* vector database --> custom Qdrant database, docker
 
