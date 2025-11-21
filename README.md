@@ -5,6 +5,7 @@ After logigng in with google drive the model will scan over all your previously 
 The model currently is able to process almost all file types on its own (including pdfs, docx, IMAGES, and even Videos and Voice Recordings) by automatically looking throuhg your google drive and compiling relevant information into its response.
 
 
+*SIMPLY AFTER LOGIN, THE MODEL LOOKS THROUGH YOUR DRIVE AUTOMATICALLY w/ YOUR QUESTION!*
 <img width="1139" height="814" alt="Screenshot 2025-11-21 120818" src="https://github.com/user-attachments/assets/e638c92d-49ae-4dbf-9eb5-788bb1afdd9b" />
 
 
