@@ -1,4 +1,4 @@
-This is a personal helper that compiles study guides automatically without needing you to paste it the information you want in it! Simply log in and ask it the ntoes you want, and it looks for relevant notes automatically! No more spending time to remake notes from the ntoes you already have!
+(The cats waterfall on the side is just for style) This is a personal helper that compiles study guides automatically without needing you to paste it the information you want in it! Simply log in and ask it the ntoes you want, and it looks for relevant notes automatically! No more spending time to remake notes from the ntoes you already have!
 
 After logigng in with google drive the model will scan over all your previously made files from all folders and take the relevant information among those files and create a comprehensive study guide for you!
 
