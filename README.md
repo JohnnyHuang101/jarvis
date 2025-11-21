@@ -1,4 +1,4 @@
-TechStack: java, springboot, react, nodejs, vite, docker, langchain, qdrant, google api, openai api
+TechStack: java, springboot, react, nodejs,typescript, vite, docker, langchain, qdrant, google api, openai api
 
 
 (The cats waterfall on the side is just for style) This is a personal helper that compiles study guides automatically without needing you to paste it the information you want in it! Simply log in and ask it the ntoes you want, and it looks for relevant notes automatically! No more spending time to remake notes from the ntoes you already have!
@@ -16,6 +16,6 @@ The model currently is able to process almost all file types on its own (includi
 * preprocessing and data splicing & pipeline to connect to LLM and database--> langchain, openai API
 * vector embeddings and agent configs w/ multi modal processing capabilities --> openai API
 * backend controllers for server hosting and other scripts --> springboot, maven, java
-* frontend files server and dynamic chat layout --> ReactJS, NodeJS, Vite
+* frontend files server and dynamic chat layout --> ReactJS, NodeJS, Vite, typescript
 * vector database --> custom Qdrant database, docker
 
