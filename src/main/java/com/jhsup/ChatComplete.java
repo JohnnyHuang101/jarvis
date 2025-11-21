@@ -98,7 +98,7 @@ public class ChatComplete {
         // 2. Construct the System Prompt (The "Rules")
         String systemPrompt = "You are an expert study assistant. You are tasked with creating a structured study guide with bullet points for the user's provided TOPIC." +
                 "Answer the user's question using ONLY the provided CONTEXT below. " +
-                "If the context doesn't contain the answer, say you don't know. ";
+                "If the context doesn't contain the answer, say the question is off topic and that youre only used to create study guide notes ";
 
         // 3. Construct the User Prompt (Context + Query)
         String finalUserMessage = "CONTEXT:\n" + retrievedContext + "\n\nUSER TOPIC:\n" + userQuery;

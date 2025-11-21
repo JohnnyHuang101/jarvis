@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   qdrant:
     image: qdrant/qdrant:latest
@@ -10,6 +9,9 @@ services:
     volumes:
       # Maps a folder named 'qdrant_storage' in your current directory 
       # to the container's storage path.
-      - ./VDB_Storage:/qdrant/storage
+      - VDB_Storage:/qdrant/storage
     # ---------------------------
     restart: unless-stopped
+
+volumes:
+  VDB_Storage:

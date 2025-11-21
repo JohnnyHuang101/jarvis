@@ -1,4 +1,4 @@
-package com.jhsup;
+package com.jhsup.ProcessingCode;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
