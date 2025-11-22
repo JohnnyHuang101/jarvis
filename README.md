@@ -6,7 +6,7 @@
 * vector database --> custom Qdrant database, docker
 * 
 
-(The cats waterfall on the side is just for style) This is a personal helper that compiles study guides automatically without needing you to paste it the information you want in it! Simply log in and ask it the ntoes you want, and it looks for relevant notes automatically! No more spending time to remake notes from the ntoes you already have!
+(The cats waterfall on the side is just for style) This is a personal helper that's LINKED to your google account and compiles study guides automatically for you. It creates study guides without needing you having to paste it the information you want in it! Simply log in and ask it the notes you want, and it looks for relevant notes automatically! No more spending time to remake notes from the ntoes you already have!
 
 After logigng in with google drive the model will scan over all your previously made files from all folders and take the relevant information among those files and create a comprehensive study guide for you! It also looks through your google calendar to make sure its refering to the correct exam based on the dates given
 
