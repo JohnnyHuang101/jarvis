@@ -4,7 +4,9 @@
 * backend controllers for server hosting and other scripts --> springboot, maven, java
 * frontend files server and dynamic chat layout --> ReactJS, NodeJS, Vite, typescript
 * vector database --> custom Qdrant database, docker
-* 
+
+<img width="1536" height="1024" alt="ChatGPT Image Dec 5, 2025, 01_51_59 PM" src="https://github.com/user-attachments/assets/bd9cf2dc-159c-4d0a-9cfc-e4aa3c9cfd99" />
+
 
 (The cats waterfall on the side is just for style) This is a personal helper that's LINKED to your google account and compiles study guides automatically for you. It creates study guides without needing you having to paste it the information you want in it! Simply log in and ask it the notes you want, and it looks for relevant notes automatically! No more spending time to remake notes from the ntoes you already have!
 
