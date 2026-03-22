@@ -1,0 +1,183 @@
+/* --- 1. Global Variables & Reset --- */
+:root {
+  --bg-dark: #0f0f13;
+  --chat-bg: #1a1a21;
+  --primary: #aa3bff;
+  --user-msg: #aa3bff;
+  --bot-msg: #2d2d3a;
+  --text: #ffffff;
+}
+
+/* --- 2. Main Layout (The Split) --- */
+.page-wrapper {
+  display: flex;
+  justify-content: center; /* Keeps chat in the exact middle */
+  height: 100vh; /* Takes up exactly the full height of the screen */
+  width: 100vw;
+  background-color: var(--bg-dark);
+  position: relative;
+  overflow: hidden; /* Prevents the falling stickers from creating scrollbars */
+  color: var(--text);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* --- 3. The "Vro Waterfall" (Sides) --- */
+.sticker-rain {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 20%; /* Each waterfall takes up 20% of the screen edge */
+  pointer-events: none; /* Crucial: Lets you click "through" the stickers */
+  z-index: 1;
+}
+
+.sticker-rain.left {
+  left: 0;
+}
+
+.sticker-rain.right {
+  right: 0;
+}
+
+.sticker {
+  position: absolute;
+  top: -150px; /* Start hidden above the screen */
+  animation-name: fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.sticker-image {
+  width: 80px; /* Adjust sticker size here */
+  height: auto;
+  border-radius: 10px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+}
+
+/* The actual falling animation */
+@keyframes fall {
+  0% { transform: translateY(-150px) rotate(0deg); }
+  100% { transform: translateY(110vh) rotate(360deg); } /* Fall past the bottom */
+}
+
+/* --- 4. Central Chat Interface --- */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 800px; /* Prevents the chat from getting too wide on big screens */
+  height: 100%;
+  background-color: var(--chat-bg);
+  z-index: 10; /* Keeps the chat ON TOP of the sticker rain */
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.5); /* Nice shadow to separate it from the background */
+}
+
+.chat-header {
+  padding: 20px;
+  text-align: center;
+  background-color: #141419;
+  border-bottom: 1px solid #333;
+}
+
+.chat-header h1 {
+  margin: 0;
+  font-size: 24px;
+  color: var(--primary);
+  font-weight: 600;
+}
+
+/* --- 5. Chat History (Middle) --- */
+.chat-window {
+  flex-grow: 1; /* Forces this section to take up all remaining space */
+  overflow-y: auto; /* Adds a scrollbar ONLY to the messages, not the whole page */
+  padding: 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.message {
+  display: flex;
+  width: 100%;
+}
+
+.message.user {
+  justify-content: flex-end; /* Pushes user messages to the right */
+}
+
+.message.bot {
+  justify-content: flex-start; /* Pushes bot messages to the left */
+}
+
+.bubble {
+  max-width: 75%;
+  padding: 14px 20px;
+  border-radius: 20px;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.message.user .bubble {
+  background-color: var(--user-msg);
+  border-bottom-right-radius: 4px; /* Makes it look like a speech bubble */
+}
+
+.message.bot .bubble {
+  background-color: var(--bot-msg);
+  border-bottom-left-radius: 4px;
+}
+
+.bubble.loading {
+  font-style: italic;
+  opacity: 0.7;
+}
+
+/* --- 6. Input Area (Bottom) --- */
+.input-area {
+  display: flex;
+  padding: 20px;
+  background-color: #141419;
+  border-top: 1px solid #333;
+  gap: 15px;
+}
+
+.input-area input {
+  flex-grow: 1; /* Input takes up maximum space */
+  padding: 15px 20px;
+  border-radius: 12px;
+  border: 1px solid #444;
+  background-color: #252530;
+  color: white;
+  font-size: 16px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.input-area input:focus {
+  border-color: var(--primary); /* Lights up purple when typing */
+}
+
+.input-area button {
+  padding: 0 30px;
+  border-radius: 12px;
+  border: none;
+  background-color: var(--primary);
+  color: white;
+  font-weight: bold;
+  font-size: 16px;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.1s;
+}
+
+.input-area button:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.input-area button:active:not(:disabled) {
+  transform: scale(0.98); /* Satisfying click effect */
+}
+
+.input-area button:disabled {
+  background-color: #444;
+  cursor: not-allowed;
+}
