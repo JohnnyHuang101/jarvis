@@ -18,7 +18,13 @@
   font-weight: bold;
 }
 
-.login-container{
-    color: white;
+.login-container {
+  color: white;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;   /* vertical centering */
+  align-items: center;       /* horizontal centering */
+  height: 100vh;             /* full screen height */
+  text-align: center;        /* center text */
 }
 </style>

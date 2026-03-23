@@ -21,4 +21,19 @@ public class OAuth {
         String accessToken = client.getAccessToken().getTokenValue();
         return "Your Access Token is: " + accessToken + ". We can now use this to hit Drive API.";
     }
+
+
+    @GetMapping("/token")
+    public String getToken(@AuthenticationPrincipal OAuth2User user,
+                        OAuth2AuthorizedClientService clientService) {
+
+        OAuth2AuthorizedClient client =
+            clientService.loadAuthorizedClient("google", user.getName());
+
+        String accessToken = client.getAccessToken().getTokenValue();
+
+        return accessToken;
+    }
+
+
 }

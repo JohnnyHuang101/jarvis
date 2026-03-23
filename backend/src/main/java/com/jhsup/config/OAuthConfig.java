@@ -12,12 +12,14 @@ public class OAuthConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
             .authorizeHttpRequests(auth -> auth
-                .anyRequest().authenticated() // Everything requires login
+                .requestMatchers("/oauth2/authorization/**", "/login/**").permitAll() 
+                .anyRequest().authenticated()
             )
             .oauth2Login(oauth2 -> oauth2
                 .defaultSuccessUrl("http://localhost:5173/dashboard", true) // REDIRECT HERE
             );
-        
+            
+            
         return http.build();
     }
 }
