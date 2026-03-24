@@ -1,5 +1,9 @@
 import { createApp } from 'vue'
-import './style.css'
 import App from './App.vue'
+import { router } from './router' // <--- Import the router you exported
+import './style.css'
 
-createApp(App).mount('#app')
+const app = createApp(App)
+
+app.use(router) // <--- THIS IS THE MAGIC LINE YOU MIGHT BE MISSING
+app.mount('#app')
