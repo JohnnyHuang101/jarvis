@@ -5,7 +5,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-
+//java -jar target/drive-fetcher-1.0-SNAPSHOT.jar
 @Configuration
 @EnableWebSecurity // Good practice to include this
 public class OAuthConfig {
