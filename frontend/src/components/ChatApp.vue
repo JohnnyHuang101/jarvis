@@ -1,6 +1,7 @@
 <script setup>
-  import { ref, nextTick, watch } from 'vue';
-  import stickerImage1 from '../assets/images/vro.jpg'; 
+  import { ref, nextTick, watch, onMounted } from 'vue';
+  import stickerImage1 from '../assets/images/vro.jpg';
+  import axios from 'axios'; // or use fetch
 
   const NUMBER_OF_STICKERS = 15;
   const STICKER_IMAGES = [stickerImage1];
@@ -15,7 +16,32 @@
   const input = ref("");
   const isLoading = ref(false);
 
+  const initializing = ref("true");
+
+
   // --- Methods ---
+
+  onMounted(async () => {
+    try {
+      const response = await axios.get('http://localhost:8080/api/user/load', {
+        withCredentials: true 
+      });
+      console.log("Jarvis Initialized:", response.data);
+    } catch (error) {
+      // If we get a 401 or the request fails because of the redirect
+      if (error.response && error.response.status === 401) {
+        console.log("Not logged in. Redirecting to Google...");
+        // Redirect the WHOLE browser to your Spring Boot OAuth starter URL
+        window.location.href = 'http://localhost:8080/oauth2/authorization/google';
+      } else {
+        console.error("Initialization failed:", error);
+      }
+    } finally {
+      initializing.value = false;
+    }
+  });
+
+
   const scrollToBottom = async () => {
     await nextTick();
     const el = document.getElementById('messagesEnd');
@@ -123,7 +149,7 @@
 
         <div id="messagesEnd"></div>
       </div>
-
+      
       <div class="input-area">
         <input 
           type="text" 
@@ -132,10 +158,60 @@
           placeholder="Enter a Topic..." 
           :disabled="isLoading" 
         />
-        <button @click="sendMessage" :disabled="isLoading">
+        <button @click="sendMessage" :disabled="isLoading || initializing">
           Send
         </button>
       </div>
+
+
+      <div v-if="initializing" class="modal-overlay">
+        <div class="modal-content">
+          <div class="spinner"></div>
+          <p>Initializing your workspace...</p>
+        </div>
+      </div>
+
     </div>
   </div>
 </template>
+
+
+
+<style scoped>
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7); /* Dim the background */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999; /* Stay on top of everything */
+}
+
+.modal-content {
+  background: white;
+  padding: 2rem;
+  border-radius: 8px;
+  text-align: center;
+  color: #333;
+}
+
+/* Simple Spinner Animation */
+.spinner {
+  margin: 0 auto 1rem;
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #3498db; /* Blue color */
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+</style>

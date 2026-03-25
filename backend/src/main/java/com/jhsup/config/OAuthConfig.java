@@ -13,18 +13,18 @@ public class OAuthConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            // 1. Disable CSRF so you can send POST requests without a token
             .csrf(csrf -> csrf.disable())
-            
-            // 2. Enable CORS so your Vue app (5173) can talk to Spring (8080)
             .cors(org.springframework.security.config.Customizer.withDefaults())
-            
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/", "/login/**", "/oauth2/**", "/api/**").permitAll() 
                 .anyRequest().authenticated()
             )
+            // ADD THIS PART:
+            .exceptionHandling(e -> e
+                .authenticationEntryPoint(new org.springframework.security.web.authentication.HttpStatusEntryPoint(org.springframework.http.HttpStatus.UNAUTHORIZED))
+            )
             .oauth2Login(oauth2 -> oauth2
-                .defaultSuccessUrl("http://localhost:5173/chat", true)
+                .successHandler(successHandler)
             );
             
         return http.build();
