@@ -1,8 +1,8 @@
-com\jhsup\JarvisApplication.class
-com\jhsup\config\WebConfig.class
-com\jhsup\ChatComplete$1.class
-com\jhsup\ChatController.class
-com\jhsup\UserCreate.class
-com\jhsup\ChatComplete.class
-com\jhsup\UserController.class
-com\jhsup\config\OAuthConfig.class
+com/jhsup/config/OAuthConfig.class
+com/jhsup/ChatComplete$1.class
+com/jhsup/ChatComplete.class
+com/jhsup/config/WebConfig.class
+com/jhsup/JarvisApplication.class
+com/jhsup/ChatController.class
+com/jhsup/UserController.class
+com/jhsup/UserCreate.class

@@ -1,12 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Login from './components/Login.vue'
 import ChatApp from './components/ChatApp.vue'
-
+import JarvisLoader from './components/JarvisLoader.vue'
 const routes = [
   // Option A: Make the root path show the Login component
   { path: '/', component: Login }, 
 
-  { path: '/chat', component: ChatApp }
+  { path: '/chat', component: ChatApp },
+  { path: '/loading', component: JarvisLoader}
 ]
 
 export const router = createRouter({

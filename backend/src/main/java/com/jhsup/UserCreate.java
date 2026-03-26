@@ -1,96 +1,102 @@
+
+
 package com.jhsup;
 
-import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
-import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
-import org.springframework.security.oauth2.core.user.OAuth2User;
-import org.springframework.stereotype.Service;
-import java.io.File;
-import java.nio.file.Paths;
+import java.io.File; // Standard Java File
+import java.io.FileOutputStream; // For downloading
+import java.util.List;
 
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.drive.Drive;
-import com.google.api.services.drive.model.File;
 import com.google.api.services.drive.model.FileList;
-import java.util.List;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
+import org.springframework.security.oauth2.core.user.OAuth2User;
+import org.springframework.stereotype.Service;
+import org.springframework.scheduling.annotation.Async;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 
 @Service
 public class UserCreate {
 
-    public String getOrCreateUserFolder(OAuth2User principal) {
+    private final OAuth2AuthorizedClientService authorizedClientService;
+    
+    // Tracks initialization stage by Google User ID (sub)
+    // 1 = Folders, 2 = Downloading, 3 = Embedding, 4 = Ready, -1 = Error
+    private final Map<String, Integer> userProgressMap = new ConcurrentHashMap<>();
 
-        String userId = principal.getAttribute("sub");
-        String email = principal.getAttribute("email");
-        String folder_path = userId;
-
-        File folder = new File("user-data",folder_path);
-
-        if(!folder.exists()){
-            boolean created = folder.mkdirs();
-
-            if(created){    
-                System.out.println("Created permanent folder for: " + email);
-            
-                new File(folder, "Documents").mkdir();
-                new File(folder, "Images").mkdir();
-                new File(folder, "Others").mkdir();
-            }
-        }
-
-        return folder.getAbsolutePath();
-
+    public UserCreate(OAuth2AuthorizedClientService authorizedClientService) {
+        this.authorizedClientService = authorizedClientService;
     }
 
-    public void populateFiles(OAuth2User principal, String userRootPath) throws Exception {
-        // 1. Get the Access Token for this specific user
-        OAuth2AuthorizedClient client = authorizedClientService.loadAuthorizedClient("google", principal.getName());
-        String accessToken = client.getAccessToken().getTokenValue();
+    // --- GETTER FOR THE FRONTEND TO POLL ---
+    public int getUserProgress(String userId) {
+        return userProgressMap.getOrDefault(userId, 0); // Default to 0 if not found
+    }
 
-        // 2. Initialize the Google Drive Service
-        Drive driveService = new Drive.Builder(
-                GoogleNetHttpTransport.newTrustedTransport(),
-                GsonFactory.getDefaultInstance(),
-                request -> request.getHeaders().setAuthorization("Bearer " + accessToken))
-                .setApplicationName("Jarvis-Drive-Fetcher")
-                .build();
+    // --- STAGE 1: The Initial Sync Call ---
+    public String getOrCreateUserFolder(OAuth2User principal) {
+        String userId = principal.getAttribute("sub");
+        File folder = new File("user-data", userId);
+
+        if (!folder.exists()) {
+            folder.mkdirs();
+            new File(folder, "Documents").mkdir();
+            new File(folder, "Images").mkdir();
+            new File(folder, "Others").mkdir();
+        }
         
+        // Mark Stage 1 complete!
+        userProgressMap.put(userId, 1);
+        return folder.getAbsolutePath();
+    }
 
-        String pageToken = null;
-
-        do {
-            FileList result = driveService.files().list()
-                    .setPageSize(100) // Get 100 at a time
-                    .setFields("nextPageToken, files(id, name, mimeType)")
-                    .setPageToken(pageToken) // Use the "bookmark" from the previous loop
-                    .execute();
-
-            List<File> driveFiles = result.getFiles();
-            if (driveFiles == null || driveFiles.isEmpty()) {
-                System.out.println("No files found.");
-                return;
-            }
-
-            for (File file : driveFiles) {
-                String mimeType = file.getMimeType();
-                String folderName = "Others";
-
-                if (mimeType.contains("image")) {
-                    folderName = "Images";
-                } else if (mimeType.contains("pdf") || mimeType.contains("word") || mimeType.contains("text")) {
-                    folderName = "Documents";
-                }
-
-                System.out.println("Moving " + file.getName() + " [" + mimeType + "] to " + folderName);
-                
-                // Logic to actually download the file bytes would go here:
-                driveService.files().get(file.getId()).executeMediaAndDownloadTo(outputStream);
-            }
-
-            // Get the "bookmark" for the next loop
-            pageToken = result.getNextPageToken();
-
-        } while (pageToken != null); // Keep going until there are no more pages
+    // --- STAGES 2 & 3: The Async Master Pipeline ---
+    @Async
+    public void runInitializationPipeline(OAuth2User principal, String userRootPath) {
+        String userId = principal.getAttribute("sub");
         
+        try {
+            // Stage 1 (Folder created) is already done by the Controller
+            userProgressMap.put(userId, 1);
+
+            // Stage 2: Download
+            populateFiles(principal, userRootPath);
+            userProgressMap.put(userId, 2);
+
+            // Stage 3: Vector Embeddings
+            embedDocuments(userRootPath);
+            userProgressMap.put(userId, 3);
+
+            // Stage 4: Ready
+            userProgressMap.put(userId, 4);
+
+        } catch (Exception e) {
+            userProgressMap.put(userId, -1);
+        }
+    }
+
+    // Your existing populateFiles method (remove the @Async from it, 
+    // since the runInitializationPipeline is now handling the async thread)
+    private void populateFiles(OAuth2User principal, String userRootPath) throws Exception {
+        // ... (Keep your exact driveService code here) ...
+    }
+
+    // --- THE VECTOR DB PLACEHOLDER ---
+    private void embedDocuments(String userRootPath) {
+        System.out.println("Starting vectorization for documents in: " + userRootPath + "/Documents");
+        
+        // 1. Read PDFs/Text files from the Documents folder
+        // 2. Chunk the text
+        // 3. Send chunks to LLM to get vector embeddings
+        // 4. Save to Vector Database (Chroma, Pinecone, or pgvector)
+        
+        // Simulating heavy processing time for now:
+        try { Thread.sleep(5000); } catch (InterruptedException e) {}
     }
 
 
@@ -98,4 +104,6 @@ public class UserCreate {
         String userId = principal.getAttribute("sub");
         return new File("user-data", userId).exists();
     }
+
+
 }

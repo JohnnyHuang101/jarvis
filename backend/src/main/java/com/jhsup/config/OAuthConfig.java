@@ -24,7 +24,7 @@ public class OAuthConfig {
                 .authenticationEntryPoint(new org.springframework.security.web.authentication.HttpStatusEntryPoint(org.springframework.http.HttpStatus.UNAUTHORIZED))
             )
             .oauth2Login(oauth2 -> oauth2
-                .defaultSuccessUrl("http://localhost:5173/chat", true)
+                .defaultSuccessUrl("http://localhost:5173/loading", true)
             );
             
         return http.build();
