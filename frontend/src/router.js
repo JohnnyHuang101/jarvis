@@ -14,14 +14,7 @@ export const router = createRouter({
   routes
 })
 
+
 router.beforeEach((to, from, next) => {
-  // Simple check for the session cookie
-  const isAuthenticated = document.cookie.includes('JSESSIONID'); 
-  
-  // If they try to hit /chat without being logged in
-  if (to.path === '/chat' && !isAuthenticated) {
-    next('/'); // Send them back to the root (which now shows Login)
-  } else {
-    next(); // Carry on
-  }
+  next(); 
 })

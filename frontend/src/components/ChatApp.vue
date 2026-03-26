@@ -21,22 +21,28 @@
 
   // --- Methods ---
 
+  const delay = (ms) => new Promise(res => setTimeout(res, ms));
+
   onMounted(async () => {
     try {
+      // 1. Hit the backend to sync/check the user
       const response = await axios.get('http://localhost:8080/api/user/load', {
         withCredentials: true 
       });
-      console.log("Jarvis Initialized:", response.data);
+      
+      console.log("Sync successful. Waiting 3 seconds...");
+
+      // 2. Sleep for 3 seconds so the user can see your "Initializing" modal
+      await delay(3000);
+
     } catch (error) {
-      // If we get a 401 or the request fails because of the redirect
       if (error.response && error.response.status === 401) {
-        console.log("Not logged in. Redirecting to Google...");
-        // Redirect the WHOLE browser to your Spring Boot OAuth starter URL
-        window.location.href = 'http://localhost:8080/oauth2/authorization/google';
-      } else {
-        console.error("Initialization failed:", error);
+        // If not logged in, wait a bit so they see the error before redirecting to login
+        await delay(2000); 
+        window.location.href = "http://localhost:8080/oauth2/authorization/google";
       }
     } finally {
+      // 3. Finally hide the modal and enable the chat button
       initializing.value = false;
     }
   });

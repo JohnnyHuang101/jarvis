@@ -16,7 +16,7 @@ public class OAuthConfig {
             .csrf(csrf -> csrf.disable())
             .cors(org.springframework.security.config.Customizer.withDefaults())
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/", "/login/**", "/oauth2/**", "/api/**").permitAll() 
+                .requestMatchers("/", "/login/**", "/oauth2/**").permitAll() 
                 .anyRequest().authenticated()
             )
             // ADD THIS PART:
@@ -24,7 +24,7 @@ public class OAuthConfig {
                 .authenticationEntryPoint(new org.springframework.security.web.authentication.HttpStatusEntryPoint(org.springframework.http.HttpStatus.UNAUTHORIZED))
             )
             .oauth2Login(oauth2 -> oauth2
-                .successHandler(successHandler)
+                .defaultSuccessUrl("http://localhost:5173/chat", true)
             );
             
         return http.build();
