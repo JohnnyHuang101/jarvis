@@ -1,7 +1,6 @@
 <script setup>
   import { ref, nextTick, watch, onMounted } from 'vue';
   import stickerImage1 from '../assets/images/vro.jpg';
-  import axios from 'axios'; // or use fetch
 
   const NUMBER_OF_STICKERS = 15;
   const STICKER_IMAGES = [stickerImage1];
@@ -15,8 +14,6 @@
   ]);
   const input = ref("");
   const isLoading = ref(false);
-
-  const initializing = ref("true");
 
 
   // --- Methods ---
@@ -39,22 +36,50 @@
     input.value = ""; 
     isLoading.value = true;
 
+    messages.value.push({
+      role: 'bot',
+      content: ""
+    });
+    
+    const botMessageIndex = messages.value.length - 1;
+
     try {
       // 2. Call Spring Boot API via Vite Proxy
-      const response = await fetch('/api/ask', {
+      const response = await fetch('/api/user/ask', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
+        credentials: 'include',
         body: JSON.stringify({ question: currentInput }),
       });
 
       if (!response.ok) throw new Error('Network response was not ok');
 
-      const data = await response.json();
 
-      // 3. Add Bot Response
-      messages.value.push({ role: 'bot', content: data.answer });
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder()
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        
+        const lines = chunk.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('data:')) {
+            
+            const cleanText = line.substring(5); 
+            
+            messages.value[botMessageIndex].content += cleanText; 
+            scrollToBottom();
+          }
+        }
+      }
+
+
+
     } catch (error) {
       console.error("Error:", error);
       messages.value.push({ 
@@ -136,17 +161,9 @@
           placeholder="Enter a Topic..." 
           :disabled="isLoading" 
         />
-        <button @click="sendMessage" :disabled="isLoading || initializing">
+        <button @click="sendMessage" :disabled="isLoading">
           Send
         </button>
-      </div>
-
-
-      <div v-if="initializing" class="modal-overlay">
-        <div class="modal-content">
-          <div class="spinner"></div>
-          <p>Initializing your workspace...</p>
-        </div>
       </div>
 
     </div>
