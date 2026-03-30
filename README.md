@@ -5,7 +5,7 @@
 * frontend files server and dynamic chat layout --> ReactJS, NodeJS, Vite, typescript
 * vector database --> custom Qdrant database, docker
 
-<img width="1024" height="687" alt="image" src="https://github.com/user-attachments/assets/48966ee1-dbbb-4466-bd32-a7b985d620d9" />
+<img width="3395" height="1276" alt="Screenshot 2026-03-29 200105" src="https://github.com/user-attachments/assets/3c8e93cf-f6fa-4e8e-aa82-3aab3ca8539d" />
 
 
 (The cats waterfall on the side is just for style) This is a personal helper that's LINKED to your google account and compiles study guides automatically for you. It creates study guides without needing you having to paste it the information you want in it! Simply log in and ask it the notes you want, and it looks for relevant notes automatically! No more spending time to remake notes from the ntoes you already have!
