@@ -2,7 +2,9 @@
 
 /downloads_/
 
-# /target/
+/backend/target/
+
+/backend/user-data/
 
 /VDB_Storage/
 
