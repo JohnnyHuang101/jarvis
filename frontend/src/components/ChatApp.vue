@@ -54,6 +54,12 @@
         body: JSON.stringify({ question: currentInput }),
       });
 
+      if (response.status === 401) {
+        console.log("Not logged in. Redirecting to Google...");
+        window.location.href = 'http://localhost:8080/oauth2/authorization/google';
+        return;
+      }  
+
       if (!response.ok) throw new Error('Network response was not ok');
 
 

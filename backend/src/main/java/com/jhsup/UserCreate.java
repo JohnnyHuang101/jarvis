@@ -243,7 +243,7 @@ public class UserCreate {
     public String retrieveContext(String queryText, String userId) throws Exception {
 
 
-        File userVectors = new File("user-data/" + userId + "vectors.json");
+        File userVectors = new File("user-data/" + userId + "/vectors.json");
 
         // if(!userVectorFile.exists()){
         //     return "";
@@ -255,10 +255,22 @@ public class UserCreate {
             userStore.load(userVectors);
 
             SearchRequest request = SearchRequest.query(queryText)
-                .withTopK(5)
-                .withSimilarityThreshold(0.7);
+                .withTopK(5);
+                // .withSimilarityThreshold(0.7);
 
+            // 1. Change the call back to similaritySearch
             List<Document> similarDocs = userStore.similaritySearch(request);
+
+            // 2. Access the score from Metadata
+            similarDocs.forEach(doc -> {
+                // In SimpleVectorStore, the key is usually "distance" or "similarityScore"
+                // Let's print the whole map to see exactly what's inside
+                System.out.println("Metadata keys: " + doc.getMetadata().keySet());
+                
+                Double score = (Double) doc.getMetadata().get("distance"); 
+                System.out.println("Score: " + score + " | ID: " + doc.getId());
+            });
+
             return similarDocs.stream()
                     .map(Document::getContent)
                     .collect(Collectors.joining("\n\n--- Document Chunk ---\n\n"));

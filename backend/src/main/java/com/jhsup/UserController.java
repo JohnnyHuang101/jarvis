@@ -85,20 +85,6 @@ public class UserController {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @PostMapping(value = "/ask", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> askGPT(@RequestBody ChatRequest request, @AuthenticationPrincipal OAuth2User principal) throws Exception {
 
