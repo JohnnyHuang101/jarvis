@@ -262,3 +262,25 @@ body {
   height: 100vh;
   background-color: var(--bg-dark);
 }
+
+.courses-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.course-card {
+  background: #2d2d3a;   /* match bot bubble */
+  color: white;
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+}
+
+.course-card:hover {
+  transform: translateY(-4px);
+}
+.dashboard-content {
+  padding: 30px;
+}

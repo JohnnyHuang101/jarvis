@@ -56,7 +56,7 @@ public class SyllabusController {
             }
 
             // Make sure we use "email" consistently across upload and getCourses
-            String userId = principal.getAttribute("email"); 
+            String userId = principal.getAttribute("sub"); 
 
             // 3. Send to your service
             syllabusService.processSyllabus(userId, rawSyllabusText);
@@ -75,8 +75,10 @@ public class SyllabusController {
             return ResponseEntity.status(401).build();
         }
 
-        String userId = principal.getAttribute("email");
+        String userId = principal.getAttribute("sub");
         File userDir = new File("user-data/" + userId + "/courses");
+        System.out.println("Looking for courses in: " + userDir.getAbsolutePath());
+
         List<Map<String, String>> courses = new ArrayList<>();
 
         if (userDir.exists() && userDir.isDirectory()) {
@@ -92,7 +94,8 @@ public class SyllabusController {
                             String courseName = rootNode.path("courseName").asText("Unknown Course");
                             String courseCode = rootNode.path("courseCode").asText("Unknown Code");
                             String term = rootNode.path("term").asText("Unknown Term");
-
+                            
+                            System.out.println("Parsed course: " + courseCode + " - " + courseName + " (" + term + ") from file: " + file.getName());
                             // Build the map for Vue
                             Map<String, String> courseData = new HashMap<>();
                             courseData.put("courseName", courseName);
