@@ -54,13 +54,16 @@ public class SyllabusController {
             if (rawSyllabusText.trim().isEmpty()) {
                 return ResponseEntity.badRequest().body("Could not extract any text from this file.");
             }
-
+            
+            
             // Make sure we use "email" consistently across upload and getCourses
             String userId = principal.getAttribute("sub"); 
 
             // 3. Send to your service
             syllabusService.processSyllabus(userId, rawSyllabusText);
 
+            syllabusService.vectorizeCourse(userId,rawSyllabusText);
+            
             return ResponseEntity.ok("Syllabus processed and master schedule created for " + userId);
             
         } catch (Exception e) {
