@@ -65,6 +65,8 @@ public class SyllabusController {
             // 3. Send to your service
             syllabusService.processSyllabus(userId, rawSyllabusText);
 
+            syllabusService.vectorizeCourse(userId,rawSyllabusText);
+            
             return ResponseEntity.ok("Syllabus processed and master schedule created for " + userId);
             
         } catch (Exception e) {

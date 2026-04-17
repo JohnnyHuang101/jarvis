@@ -8,6 +8,7 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.vectorstore.SimpleVectorStore;
 import org.springframework.stereotype.Service;
+import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 
 import java.io.File;
 import java.util.List;
@@ -80,13 +81,16 @@ public class SyllabusService {
 
     private final ObjectMapper objectMapper;
     private final ChatClient chatClient;
+    private final EmbeddingModel embeddingModel;
 
     // Spring Boot automatically injects the ObjectMapper
     public SyllabusService(ObjectMapper objectMapper, 
-                           ChatClient.Builder chatClientBuilder) {
+                           ChatClient.Builder chatClientBuilder,
+                           EmbeddingModel embeddingModel) {
         
         this.objectMapper = objectMapper;
         this.chatClient = chatClientBuilder.build(); 
+        this.embeddingModel = embeddingModel;
     }
 
 
@@ -179,4 +183,28 @@ public class SyllabusService {
     // }   
 
 
+    public void vectorizeCourse(String userId, String syllabus){
+
+        String userRootPath = "user-data" + File.separator + userId;
+
+        SimpleVectorStore userCourses = new SimpleVectorStore(embeddingModel);
+        File userVectorFile = new File(userRootPath, "vectors_courses.json");
+
+        if (userVectorFile.exists()) {
+            userCourses.load(userVectorFile);
+        }
+
+        Document syllabusDoc = new Document(syllabus);
+
+        TokenTextSplitter chunker = new TokenTextSplitter(300, 75, 100, 1000, true);
+        
+        List<Document> chunks = chunker.apply(List.of(syllabusDoc));
+
+        userCourses.add(chunks);
+
+        userCourses.save(userVectorFile);
+
+
+        System.out.println("Finished creating user courses db");
+    }
 }
