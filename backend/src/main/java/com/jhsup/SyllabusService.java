@@ -90,29 +90,57 @@ public class SyllabusService {
     }
 
 
-    public SyllabusExtraction extractWithLlm(String rawText){
+    public SyllabusExtraction extractWithLlm(String rawText) {
         var converter = new BeanOutputConverter<>(SyllabusExtraction.class);
         String formatInstructions = converter.getFormat();
-
+    
+        // 1. TWEAKED PROMPT: Aggressively tell the LLM to output ONLY JSON
         String promptText = """
             You are an academic assistant. Read the following raw syllabus text and extract the course details, schedule, grading scale, assignments, and exams.
-            If a specific piece of information (like office hours or grading scale) is not explicitly stated, leave those fields null or as an empty list. Do not guess.
+            If a specific piece of information is not explicitly stated, leave those fields null or as an empty list. Do not guess.
+            
+            IMPORTANT: Your entire response MUST be valid, raw JSON. Do not include markdown code blocks (like ```json), and do not include any introductory or conversational text.
             
             Raw Syllabus Text:
             {syllabusText}
             
             {formatInstructions}
             """;
-
+    
         PromptTemplate template = new PromptTemplate(promptText);
         template.add("syllabusText", rawText);
         template.add("formatInstructions", formatInstructions);
-
-        String jsonOutput = chatClient.prompt(template.create())
-                .call()
-                .content();
-
-        return converter.convert(jsonOutput);
+    
+        try {
+            // 2. CHECK INPUT: Make sure you are actually sending text to the LLM
+            System.out.println("====== STARTING LLM EXTRACTION ======");
+            System.out.println("Input text length: " + (rawText != null ? rawText.length() : "NULL"));
+    
+            String jsonOutput = chatClient.prompt(template.create())
+                    .call()
+                    .content();
+    
+            // 3. PRINT THE RAW OUTPUT: This is the most important step. 
+            // This will show you exactly what the LLM generated before Java tries to parse it.
+            System.out.println("====== RAW LLM OUTPUT ======");
+            System.out.println(jsonOutput);
+            System.out.println("============================");
+    
+            if (jsonOutput == null || jsonOutput.trim().isEmpty()) {
+                System.err.println("ERROR: The LLM returned an empty response.");
+                return null;
+            }
+    
+            // 4. ATTEMPT CONVERSION
+            return converter.convert(jsonOutput);
+    
+        } catch (Exception e) {
+            // 5. CATCH PARSING ERRORS: If Jackson fails to map the JSON to your record/class, it will print here.
+            System.err.println("====== JSON CONVERSION FAILED ======");
+            System.err.println("Reason: " + e.getMessage());
+            e.printStackTrace();
+            return null;
+        }
     }
 
     public void processSyllabus(String userId, String rawText) throws Exception{
@@ -135,5 +163,20 @@ public class SyllabusService {
 
         
     }
+
+
+
+    // public Document[] searchBm25(Document[] documents, String query){
+        
+    //     query = query.toLowerCase();
+
+    //     for (Document doc : documents) {
+    //         String content = doc.getContent().toLowerCase();
+    //         content = content.replaceAll("[^a-z0-9 ]", " "); // Remove punctuation
+    //         String[] words = content.split("\\s+");
+            
+    //     }
+    // }   
+
+
 }
-                        

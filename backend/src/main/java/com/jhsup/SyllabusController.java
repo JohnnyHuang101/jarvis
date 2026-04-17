@@ -8,6 +8,8 @@ import org.springframework.core.io.Resource;
 
 // Spring AI
 import org.springframework.ai.reader.tika.TikaDocumentReader;
+import org.apache.tika.config.TikaConfig;
+import org.apache.tika.parser.ocr.TesseractOCRConfig;
 import org.springframework.ai.document.Document;
 
 // Security & OAuth2
@@ -41,7 +43,7 @@ public class SyllabusController {
     public ResponseEntity<String> uploadSyllabus(@RequestParam("file") MultipartFile file, @AuthenticationPrincipal OAuth2User principal) {
 
         try {
-            // 1. Use Tika to extract documents automatically using file.getResource()
+
             TikaDocumentReader documentReader = new TikaDocumentReader(file.getResource());
             List<Document> documents = documentReader.get();
 
@@ -54,7 +56,9 @@ public class SyllabusController {
             if (rawSyllabusText.trim().isEmpty()) {
                 return ResponseEntity.badRequest().body("Could not extract any text from this file.");
             }
-
+            else {
+                System.out.println("Extracted syllabus text: " + rawSyllabusText);
+            }
             // Make sure we use "email" consistently across upload and getCourses
             String userId = principal.getAttribute("sub"); 
 
