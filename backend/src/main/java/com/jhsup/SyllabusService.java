@@ -147,25 +147,32 @@ public class SyllabusService {
         }
     }
 
-    public void processSyllabus(String userId, String rawText) throws Exception{
+    public String processSyllabus(String userId, String rawText) throws Exception{
 
         SyllabusExtraction extractedData = extractWithLlm(rawText);
 
         String courseCode = extractedData.courseCode();
 
-        File userDir = new File("user-data/" + userId + "/courses");
+        File userDir = new File("user-data/" + userId + "/courses/" + courseCode);
 
         if (!userDir.exists()) {
             userDir.mkdirs(); // Notice the 's' at the end of mkdirs!
         }
 
         File scheduleFile = new File(userDir, courseCode + "-syllabus.json");
-
+ 
 
         objectMapper.writerWithDefaultPrettyPrinter().writeValue(scheduleFile, extractedData);
+
+
+        File syllabus = new File(userDir, "syllabus-raw.txt");
+
+        java.nio.file.Files.writeString(syllabus.toPath(), rawText);
+
+
         System.out.println("Saved master schedule to: " + scheduleFile.getAbsolutePath());
 
-        
+        return courseCode;
     }
 
 
@@ -183,12 +190,13 @@ public class SyllabusService {
     // }   
 
 
-    public void vectorizeCourse(String userId, String syllabus){
+    public void vectorizeCourse(String userId, String syllabus, String courseCode){
 
-        String userRootPath = "user-data" + File.separator + userId;
+
+        File userDir = new File("user-data/" + userId + "/courses/" + courseCode);
 
         SimpleVectorStore userCourses = new SimpleVectorStore(embeddingModel);
-        File userVectorFile = new File(userRootPath, "vectors_courses.json");
+        File userVectorFile = new File(userDir, "syllabus-vectorized.json");
 
         if (userVectorFile.exists()) {
             userCourses.load(userVectorFile);

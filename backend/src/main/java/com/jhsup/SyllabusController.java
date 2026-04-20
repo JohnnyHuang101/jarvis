@@ -63,9 +63,9 @@ public class SyllabusController {
             String userId = principal.getAttribute("sub"); 
 
             // 3. Send to your service
-            syllabusService.processSyllabus(userId, rawSyllabusText);
+            String courseCode = syllabusService.processSyllabus(userId, rawSyllabusText);
 
-            syllabusService.vectorizeCourse(userId,rawSyllabusText);
+            syllabusService.vectorizeCourse(userId,rawSyllabusText,courseCode);
             
             return ResponseEntity.ok("Syllabus processed and master schedule created for " + userId);
             
@@ -75,51 +75,64 @@ public class SyllabusController {
     }
 
     @GetMapping("/courses")
-    public ResponseEntity<List<Map<String, String>>> getCourses(@AuthenticationPrincipal OAuth2User principal){
+    public ResponseEntity<List<Map<String, String>>> getCourses(@AuthenticationPrincipal OAuth2User principal) {
         
         if (principal == null) {
             return ResponseEntity.status(401).build();
         }
 
         String userId = principal.getAttribute("sub");
-        File userDir = new File("user-data/" + userId + "/courses");
-        System.out.println("Looking for courses in: " + userDir.getAbsolutePath());
+        File coursesRootDir = new File("user-data/" + userId + "/courses");
+        System.out.println("Looking for course folders in: " + coursesRootDir.getAbsolutePath());
 
         List<Map<String, String>> courses = new ArrayList<>();
 
-        if (userDir.exists() && userDir.isDirectory()) {
-            File[] files = userDir.listFiles();
-            if (files != null) {
-                for (File file : files) {
-                    if (file.isFile() && file.getName().endsWith(".json")) {
+        if (coursesRootDir.exists() && coursesRootDir.isDirectory()) {
+            
+            // 1. List all subdirectories (each directory is a course)
+            File[] courseFolders = coursesRootDir.listFiles(File::isDirectory);
+            
+            if (courseFolders != null) {
+                for (File courseFolder : courseFolders) {
+                    
+                    // The folder name is the courseCode based on your saving logic
+                    String folderName = courseFolder.getName(); 
+                    
+                    // 2. Target the specific JSON file inside the course folder
+                    File jsonFile = new File(courseFolder, folderName + "-syllabus.json");
+
+                    if (jsonFile.exists() && jsonFile.isFile()) {
                         try {
                             // Parse the JSON file using the injected ObjectMapper
-                            JsonNode rootNode = this.objectMapper.readTree(file);
+                            JsonNode rootNode = this.objectMapper.readTree(jsonFile);
 
                             // Extract the fields
                             String courseName = rootNode.path("courseName").asText("Unknown Course");
                             String courseCode = rootNode.path("courseCode").asText("Unknown Code");
                             String term = rootNode.path("term").asText("Unknown Term");
                             
-                            System.out.println("Parsed course: " + courseCode + " - " + courseName + " (" + term + ") from file: " + file.getName());
+                            System.out.println("Parsed course: " + courseCode + " - " + courseName + " (" + term + ") from file: " + jsonFile.getName());
+                            
                             // Build the map for Vue
                             Map<String, String> courseData = new HashMap<>();
                             courseData.put("courseName", courseName);
                             courseData.put("courseCode", courseCode);
                             courseData.put("term", term);
-                            courseData.put("fileName", file.getName()); 
+                            courseData.put("fileName", jsonFile.getName()); 
 
                             courses.add(courseData);
                             
                         } catch (Exception e) {
-                            System.err.println("Failed to parse course file: " + file.getName());
+                            System.err.println("Failed to parse course file: " + jsonFile.getAbsolutePath());
+                            e.printStackTrace();
                         }
+                    } else {
+                        System.out.println("No JSON syllabus found in folder: " + folderName);
                     }
                 }
             }
         }
         
-        // This is now safely outside the 'if' block so it always returns a response!
         return ResponseEntity.ok(courses);
     }
 }

@@ -23,7 +23,7 @@
                 <div class="card-icon">📚</div>
                     <h3>{{ course.courseCode }}: {{ course.courseName }}</h3>
                 <p class="subtitle">{{ course.term }}</p>
-            <button class="view-btn">View Schedule</button>
+            <button class="view-btn" @click="goToSchedule(course.courseCode)">View Schedule</button>
         </div>
       </div>
     </main>
@@ -67,6 +67,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 
 // Modal State
 const showUploadModal = ref(false);
@@ -169,6 +170,12 @@ const loadCourses = async () => {
 onMounted(() => {
   loadCourses();
 });
+
+const router = useRouter();
+
+const goToSchedule = (courseCode) => {
+  router.push(`/course/${courseCode}`);
+};
 
 </script>
 
