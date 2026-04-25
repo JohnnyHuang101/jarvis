@@ -32,6 +32,14 @@
           <p v-if="segment.metaInformation" class="meta-info">
             {{ segment.metaInformation }}
           </p>
+
+          <button 
+            @click="generatePlan(segment)" 
+            class="generate-btn"
+            :disabled="segment.loading"
+          >
+            {{ segment.loading ? "Generating..." : "Generate Study Plan" }}
+          </button>
         </div>
       </div>
     </main>
@@ -77,6 +85,49 @@ const generateSchedule = async () => {
     error.value = "Failed to load schedule. Ensure the syllabus was processed correctly.";
   } finally {
     isLoading.value = false;
+  }
+};
+
+
+const generatePlan = async (segment) => {
+  try {
+    const res = await fetch(
+      `http://localhost:8080/api/users/courses/${courseId}/study_guide/study-plan`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        credentials: "include", 
+        body: JSON.stringify(segment)
+      }
+    );
+
+    if (res.status === 401) {
+      window.location.href = 'http://localhost:8080/oauth2/authorization/google';
+      return;
+    }
+
+    if (!res.ok) throw new Error("Failed to generate plan");
+
+    const data = await res.json();
+
+    console.log("Study plan:", data);
+
+    // ✅ use router directly (not this.$router)
+    router.push({
+      name: "StudyPlanView",
+      params: {
+        courseId: courseId,
+        examName: segment.examName
+      }
+    });
+
+  } catch (err) {
+    console.error(err);
+    alert("Error generating study plan");
+  } finally {
+    segment.loading = false;
   }
 };
 
