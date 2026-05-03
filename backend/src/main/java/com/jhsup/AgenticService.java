@@ -1,8 +1,11 @@
 package com.jhsup;
 
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
+
+import com.jhsup.AgenticService.ExamSegment;
 
 import java.util.List;
 import java.io.IOException;
@@ -62,7 +65,10 @@ public class AgenticService {
     /**
      * Agent Step 2: Analyzes syllabus context and topics to generate a structured study plan.
      */
+    public record ExamPlanResponse(List<ExamSegment> exams) {}
+
     public List<ExamSegment> createStudyPlan(String syllabusContext, List<String> allTopics) {
+
         String systemPrompt = """
             You are an academic planning agent. Your objective is to extract exam dates and assign study topics based on the provided syllabus context.
             
@@ -73,14 +79,19 @@ public class AgenticService {
             4. If the topic distribution is NOT explicitly specified in the context, you must divide the total list of topics evenly across the number of identified test segments.
             """;
 
-        return chatClient.prompt()
+        // 1. Get the wrapper record back from the ChatClient
+        ExamPlanResponse response = chatClient.prompt()
                 .system(systemPrompt)
                 .user(u -> u.text("Syllabus Context: {context}\nTopics to cover: {topics}")
                         .param("context", syllabusContext)
                         .param("topics", String.join(", ", allTopics)))
                 .call()
-                .entity(new ParameterizedTypeReference<List<ExamSegment>>() {});
+                .entity(ExamPlanResponse.class); // <-- Just pass the class directly!
+
+        // 2. Extract and return the actual list
+        return response.exams(); 
     }
+
 
 
 

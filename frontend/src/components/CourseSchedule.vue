@@ -61,7 +61,7 @@ const isLoading = ref(true);
 const error = ref(null);
 
 const goBack = () => {
-  router.push('/'); // Or wherever your dashboard route is
+  router.push('/home'); // Or wherever your dashboard route is
 };
 
 const generateSchedule = async () => {
