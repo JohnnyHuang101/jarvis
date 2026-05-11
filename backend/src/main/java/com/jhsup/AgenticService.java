@@ -1,12 +1,14 @@
 package com.jhsup;
 
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 
 import com.jhsup.AgenticService.ExamSegment;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -17,204 +19,273 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.SimpleVectorStore;
 import java.util.stream.Collectors;
+import java.util.Comparator;
 
-@Service 
+@Service
 public class AgenticService {
-    
-    private final ChatClient chatClient;
 
-    public AgenticService(ChatClient.Builder chatClientBuilder) {
-        this.chatClient = chatClientBuilder.build();
-    }
+        private final ChatClient chatClient;
 
-    /**
-     * Orchestrator: Chains the agentic steps together.
-     * Extracts topics first, then passes them to the study plan generator.
-     */
-    public List<ExamSegment> buildFullStudyPlan(String syllabusContext) {
-        // Step 1: Extract all topics
-        List<String> extractedTopics = extractTopics(syllabusContext);
-        
-        // Step 2: Allocate topics to exam dates
-        List<ExamSegment> content =  createStudyPlan(syllabusContext, extractedTopics);
-        
-        return content; 
-    }
-
-    /**
-     * Agent Step 1: Extracts a clean, sequential list of topics from the raw text.
-     */
-    public List<String> extractTopics(String syllabusContext) {
-        String systemPrompt = """
-            You are an academic parsing agent. Your exact goal is to extract a comprehensive, sequential list of all units, chapters, or topics covered in the provided syllabus.
-            
-            Rules:
-            1. Return ONLY the topics as a flat list.
-            2. Preserve the chronological order of the topics as presented in the syllabus.
-            3. Do not include dates, administrative information, or exam schedules in this list.
-            4. Format each entry to be concise but descriptive (e.g., "Unit 1: Vector Databases" rather than just "Unit 1").
-            """;
-
-        return chatClient.prompt()
-                .system(systemPrompt)
-                .user(syllabusContext)
-                .call()
-                .entity(new ParameterizedTypeReference<List<String>>() {});
-    }
-
-    /**
-     * Agent Step 2: Analyzes syllabus context and topics to generate a structured study plan.
-     */
-    public record ExamPlanResponse(List<ExamSegment> exams) {}
-
-    public List<ExamSegment> createStudyPlan(String syllabusContext, List<String> allTopics) {
-
-        String systemPrompt = """
-            You are an academic planning agent. Your objective is to extract exam dates and assign study topics based on the provided syllabus context.
-            
-            Strict Rules for Execution:
-            1. Extract all exam, midterm, and final dates from the context.
-            2. If the context explicitly maps specific units or topics to specific exam dates, use that exact mapping.
-            3. All provided topics MUST be completely allocated before the final exam.
-            4. If the topic distribution is NOT explicitly specified in the context, you must divide the total list of topics evenly across the number of identified test segments.
-            """;
-
-        // 1. Get the wrapper record back from the ChatClient
-        ExamPlanResponse response = chatClient.prompt()
-                .system(systemPrompt)
-                .user(u -> u.text("Syllabus Context: {context}\nTopics to cover: {topics}")
-                        .param("context", syllabusContext)
-                        .param("topics", String.join(", ", allTopics)))
-                .call()
-                .entity(ExamPlanResponse.class); // <-- Just pass the class directly!
-
-        // 2. Extract and return the actual list
-        return response.exams(); 
-    }
-
-
-
-
-    public record ExamSegment(
-            String examName,
-            String date,
-            List<String> unitsCovered,
-            String metaInformation
-    ) {}
-
-    public String fetchSyllabusText(String userId, String courseCode) {
-        try{
-            Path file = Paths.get("user-data", userId, "courses", courseCode, "syllabus-raw.txt");
-
-            return Files.readString(file);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to read raw syllabus for course: " + courseCode, e);
+        public AgenticService(ChatClient.Builder chatClientBuilder) {
+                this.chatClient = chatClientBuilder.build();
         }
-    }
 
+        /**
+         * Orchestrator: Chains the agentic steps together.
+         * Extracts topics first, then passes them to the study plan generator.
+         */
+        public List<ExamSegment> buildFullStudyPlan(String syllabusContext) {
+                // Step 1: Extract all topics
+                List<String> extractedTopics = extractTopics(syllabusContext);
 
-    public record CalendarEventRequest(
-        String summary,
-        String description,
-        String location,
-        Time start,
-        Time end,
+                // Step 2: Allocate topics to exam dates
+                List<ExamSegment> content = createStudyPlan(syllabusContext, extractedTopics);
 
-        List<String> recurrence,
+                return content;
+        }
 
-        Reminders reminders,
+        /**
+         * Agent Step 1: Extracts a clean, sequential list of topics from the raw text.
+         */
+        public List<String> extractTopics(String syllabusContext) {
+                String systemPrompt = """
+                                You are an academic parsing agent. Your exact goal is to extract a comprehensive, sequential list of all units, chapters, or topics covered in the provided syllabus.
 
-        String eventType, // "default" or "focusTime"
+                                Rules:
+                                1. Return ONLY the topics as a flat list.
+                                2. Preserve the chronological order of the topics as presented in the syllabus.
+                                3. Do not include dates, administrative information, or exam schedules in this list.
+                                4. Format each entry to be concise but descriptive (e.g., "Unit 1: Vector Databases" rather than just "Unit 1").
+                                """;
 
-        Map<String, String> extendedProperties // your agent metadata
-    ) {
+                return chatClient.prompt()
+                                .system(systemPrompt)
+                                .user(syllabusContext)
+                                .call()
+                                .entity(new ParameterizedTypeReference<List<String>>() {
+                                });
+        }
 
-        public record Time(
-            String dateTime,   // "2026-04-22T18:00:00"
-            String timeZone    // "America/Los_Angeles"
-        ) {}
+        /**
+         * Agent Step 2: Analyzes syllabus context and topics to generate a structured
+         * study plan.
+         */
+        public record ExamPlanResponse(List<ExamSegment> exams) {
+        }
 
-        public record Reminders(
-            boolean useDefault,
-            List<Override> overrides
-        ) {}
+        public List<ExamSegment> createStudyPlan(String syllabusContext, List<String> allTopics) {
 
-        public record Override(
-            String method, // "popup" or "email"
-            int minutes
-        ) {}
-    }
+                String systemPrompt = """
+                                You are an academic planning agent. Your objective is to extract exam dates and assign study topics based on the provided syllabus context.
 
-    public String generateStudyGuideContent(ExamSegment exam, SimpleVectorStore vectorStore) {
-        // 1. Construct a search query from the exam's context
-        String searchQuery = String.format("Topics: %s. Context: %s", 
-                String.join(", ", exam.unitsCovered()), 
-                exam.metaInformation());
+                                Strict Rules for Execution:
+                                1. Extract all exam, midterm, and final dates from the context.
+                                2. If the context explicitly maps specific units or topics to specific exam dates, use that exact mapping.
+                                3. All provided topics MUST be completely allocated before the final exam.
+                                4. If the topic distribution is NOT explicitly specified in the context, you must divide the total list of topics evenly across the number of identified test segments.
+                                """;
 
-        // 2. Query the Vector Database for relevant course material
-        List<Document> relevantDocs = vectorStore.similaritySearch(
-                SearchRequest.query(searchQuery).withTopK(10) // Adjust K based on your chunk size
-        );
+                // 1. Get the wrapper record back from the ChatClient
+                ExamPlanResponse response = chatClient.prompt()
+                                .system(systemPrompt)
+                                .user(u -> u.text("Syllabus Context: {context}\nTopics to cover: {topics}")
+                                                .param("context", syllabusContext)
+                                                .param("topics", String.join(", ", allTopics)))
+                                .call()
+                                .entity(ExamPlanResponse.class); // <-- Just pass the class directly!
 
-        // 3. Flatten the retrieved documents into a single context string
-        String vectorDbContext = relevantDocs.stream()
-                .map(Document::getContent)
-                .collect(Collectors.joining("\n\n---\n\n"));
+                // 2. Extract and return the actual list
+                return response.exams();
+        }
 
-        // 4. Pass everything to the LLM to generate the study guide
-        String systemPrompt = """
-            You are an expert academic tutor. Your task is to create a comprehensive study guide 
-            for an upcoming exam based ONLY on the provided course material chunks.
-            
-            Format your response in clean Markdown. Include:
-            - A brief overview of the exam topics.
-            - Detailed summaries of the core concepts found in the context.
-            - Key formulas, definitions, or dates if applicable.
-            """;
+        public record ExamSegment(
+                        String examName,
+                        String date,
+                        List<String> unitsCovered,
+                        String metaInformation) {
+        }
 
-        return chatClient.prompt()
-                .system(systemPrompt)
-                .user(u -> u.text("Exam Name & Topics: {exam}\n\nCourse Material Context:\n{context}")
-                        .param("exam", exam.examName() + " - " + String.join(", ", exam.unitsCovered()))
-                        .param("context", vectorDbContext))
-                .call()
-                .content(); 
-    }
+        public String fetchSyllabusText(String userId, String courseCode) {
+                try {
+                        Path file = Paths.get("user-data", userId, "courses", courseCode, "syllabus-raw.txt");
 
+                        return Files.readString(file);
+                } catch (IOException e) {
+                        throw new RuntimeException("Failed to read raw syllabus for course: " + courseCode, e);
+                }
+        }
 
-    /**
-     * Generates a multi-day study schedule for a specific exam.
-     * Takes the specific exam segment, the full syllabus context, and outputs a List of events.
-     */
-    public List<CalendarEventRequest> buildCalendarEventRequests(ExamSegment exam, String fullSyllabusContext, String userPreferencesContext) {
-        String systemPrompt = """
-            You are an intelligent scheduling agent. Your task is to analyze an overall course syllabus 
-            and create a multi-day study plan for ONE specific upcoming exam.
-            
-            You must logically divide the units required for this exam across multiple study sessions 
-            leading up to the exam date.
-            
-            Strict Rules for mapping to the JSON schema:
-            1. 'summary': Create a clear event title (e.g., "Exam Prep: [Specific Topic]").
-            2. 'description': Detail the specific units to study during this particular session.
-            3. 'start' and 'end': STRICTLY ISO-8601 format (e.g., "2026-04-22T18:00:00"). 
-               - Ensure dates are scheduled logically BEFORE the exam date.
-               - Assume the timezone is "America/Los_Angeles" unless otherwise stated.
-            4. 'reminders': Set useDefault to true, or provide sensible overrides (e.g., popup 60 mins before).
-            5. 'eventType': Set to "focusTime".
-            6. 'extendedProperties': Include metadata like "target_exam" or "agent_type" as key-value pairs.
+        public record CalendarEventRequest(
+                        String summary,
+                        String description,
+                        String location,
+                        Time start,
+                        Time end,
 
-            Output a JSON Array containing all the scheduled study sessions.
-            """;
+                        List<String> recurrence,
 
-        return chatClient.prompt()
-                .system(systemPrompt)
-                .user(u -> u.text("Target Exam Segment: {segment}\nFull Course Syllabus: {syllabus}\nUser Scheduling Preferences: {preferences}")
-                        .param("segment", exam.toString()) 
-                        .param("syllabus", fullSyllabusContext)
-                        .param("preferences", userPreferencesContext))
-                .call()
-                // Maps the LLM's JSON array output directly into a List of your Java Records
-                .entity(new ParameterizedTypeReference<List<CalendarEventRequest>>() {}); 
-    }
+                        Reminders reminders,
+
+                        String eventType, // "default" or "focusTime"
+
+                        Map<String, String> extendedProperties // your agent metadata
+        ) {
+
+                public record Time(
+                                String dateTime, // "2026-04-22T18:00:00"
+                                String timeZone // "America/Los_Angeles"
+                ) {
+                }
+
+                public record Reminders(
+                                boolean useDefault,
+                                List<Override> overrides) {
+                }
+
+                public record Override(
+                                String method, // "popup" or "email"
+                                int minutes) {
+                }
+        }
+
+        @FunctionalInterface
+        public interface StatusCallback {
+                /**
+                 * @param extra optional extra fields, e.g. Map.of("countdown", 45) — may be
+                 *              null
+                 */
+                void update(String state, String message, Map<String, Object> extra);
+
+                default void update(String state, String message) {
+                        update(state, message, null);
+                }
+        }
+
+        // Updated method signature
+        public String generateStudyGuideContent(
+                        CalendarEventRequest event,
+                        SimpleVectorStore vectorStore,
+                        StatusCallback status) {
+
+                String searchQuery = String.format("Topics: %s. Context: %s",
+                                event.summary(),
+                                event.description() != null ? event.description() : "");
+
+                // --- Vector search ---
+                status.update("SEARCHING", "Querying course material…");
+                List<Document> relevantDocs = vectorStore.similaritySearch(
+                                SearchRequest.query(searchQuery).withTopK(6));
+
+                // --- Reranking ---
+                status.update("RERANKING", "Scoring " + relevantDocs.size() + " documents…");
+                record ScoredDoc(Document doc, double score) {
+                }
+
+                List<ScoredDoc> scored = new ArrayList<>();
+                for (Document doc : relevantDocs) {
+                        String prompt = String.format("""
+                                        Query: %s
+                                        Document: %s
+                                        Rate relevance 0-10. Reply with ONLY the number.
+                                        """, searchQuery, doc.getContent());
+                        String result = chatClient.prompt().user(prompt).call().content().trim();
+                        try {
+                                scored.add(new ScoredDoc(doc, Double.parseDouble(result)));
+                        } catch (NumberFormatException e) {
+                                scored.add(new ScoredDoc(doc, 0.0));
+                        }
+                }
+
+                List<Document> rerankedDocs = scored.stream()
+                                .sorted(Comparator.comparingDouble(ScoredDoc::score).reversed())
+                                .limit(3)
+                                .map(ScoredDoc::doc)
+                                .toList();
+
+                String vectorDbContext = rerankedDocs.stream()
+                                .map(Document::getContent)
+                                .collect(Collectors.joining("\n\n---\n\n"));
+
+                // --- Cooldown with live countdown ---
+                int cooldownSeconds = 70;
+                for (int remaining = cooldownSeconds; remaining > 0; remaining--) {
+                        status.update("COOLING_DOWN",
+                                        "Rate-limit cooldown — " + remaining + "s remaining",
+                                        Map.of("countdown", remaining, "total", cooldownSeconds));
+                        try {
+                                Thread.sleep(1_000);
+                        } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                break;
+                        }
+                }
+
+                // --- LLM generation ---
+                status.update("GENERATING", "Generating study guide…");
+
+                String systemPrompt = """
+                                You are an expert academic tutor. Your task is to create a comprehensive study guide
+                                for a specific study session based ONLY on the provided course material chunks.
+
+                                Format your response in clean Markdown. Include:
+                                - A brief overview of the specific topics for this session.
+                                - Detailed summaries of the core concepts found in the context.
+                                - Key formulas, definitions, or dates if applicable.
+                                """;
+
+                String userTemplate = "Session Topic: {topic}\nSession Details: {details}\n\nCourse Material Context:\n{context}";
+                Map<String, Object> params = Map.of(
+                                "topic", event.summary() != null ? event.summary() : "Study Session",
+                                "details",
+                                event.description() != null ? event.description() : "No specific details provided.",
+                                "context", vectorDbContext);
+
+                String finalUserPrompt = new PromptTemplate(userTemplate, params).render();
+
+                return chatClient.prompt()
+                                .system(systemPrompt)
+                                .user(finalUserPrompt)
+                                .call()
+                                .content();
+        }
+
+        /**
+         * Generates a multi-day study schedule for a specific exam.
+         * Takes the specific exam segment, the full syllabus context, and outputs a
+         * List of events.
+         */
+        public List<CalendarEventRequest> buildCalendarEventRequests(ExamSegment exam, String fullSyllabusContext,
+                        String userPreferencesContext) {
+                String systemPrompt = """
+                                You are an intelligent scheduling agent. Your task is to analyze an overall course syllabus
+                                and create a multi-day study plan for ONE specific upcoming exam.
+
+                                You must logically divide the units required for this exam across multiple study sessions
+                                leading up to the exam date.
+
+                                Strict Rules for mapping to the JSON schema:
+                                1. 'summary': Create a clear event title (e.g., "Exam Prep: [Specific Topic]").
+                                2. 'description': Detail the specific units to study during this particular session.
+                                3. 'start' and 'end': STRICTLY ISO-8601 format (e.g., "2026-04-22T18:00:00").
+                                   - Ensure dates are scheduled logically BEFORE the exam date.
+                                   - Assume the timezone is "America/Los_Angeles" unless otherwise stated.
+                                4. 'reminders': Set useDefault to true, or provide sensible overrides (e.g., popup 60 mins before).
+                                5. 'eventType': Set to "focusTime".
+                                6. 'extendedProperties': Include metadata like "target_exam" or "agent_type" as key-value pairs.
+
+                                Output a JSON Array containing all the scheduled study sessions.
+                                """;
+
+                return chatClient.prompt()
+                                .system(systemPrompt)
+                                .user(u -> u.text(
+                                                "Target Exam Segment: {segment}\nFull Course Syllabus: {syllabus}\nUser Scheduling Preferences: {preferences}")
+                                                .param("segment", exam.toString())
+                                                .param("syllabus", fullSyllabusContext)
+                                                .param("preferences", userPreferencesContext))
+                                .call()
+                                // Maps the LLM's JSON array output directly into a List of your Java Records
+                                .entity(new ParameterizedTypeReference<List<CalendarEventRequest>>() {
+                                });
+        }
 }

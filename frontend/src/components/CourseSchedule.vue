@@ -90,7 +90,38 @@ const generateSchedule = async () => {
 
 
 const generatePlan = async (segment) => {
+  segment.loading = true; // Immediately show loading state
+  
   try {
+    // 1. CACHE CHECK: Ping the GET endpoint to see if the file exists
+    const checkRes = await fetch(
+      `http://localhost:8080/api/users/courses/${courseId}/study_guide/study-plan/${encodeURIComponent(segment.examName)}`,
+      {
+        method: "GET",
+        credentials: "include"
+      }
+    );
+
+    if (checkRes.status === 401) {
+      window.location.href = 'http://localhost:8080/oauth2/authorization/google';
+      return;
+    }
+
+    // 2. IF EXISTS: Fast redirect (Skip the AI generation)
+    if (checkRes.ok) {
+      console.log(`Plan for ${segment.examName} already exists! Redirecting...`);
+      router.push({
+        name: "StudyPlanView",
+        params: {
+          courseId: courseId,
+          examName: segment.examName
+        }
+      });
+      return; // Exit the function early
+    }
+
+    // 3. IF MISSING (404): Call the POST route to generate a brand new one
+    console.log(`No existing plan found for ${segment.examName}. Generating new one...`);
     const res = await fetch(
       `http://localhost:8080/api/users/courses/${courseId}/study_guide/study-plan`,
       {
@@ -98,7 +129,7 @@ const generatePlan = async (segment) => {
         headers: {
           "Content-Type": "application/json"
         },
-        credentials: "include", 
+        credentials: "include",
         body: JSON.stringify(segment)
       }
     );
@@ -110,11 +141,7 @@ const generatePlan = async (segment) => {
 
     if (!res.ok) throw new Error("Failed to generate plan");
 
-    const data = await res.json();
-
-    console.log("Study plan:", data);
-
-    // ✅ use router directly (not this.$router)
+    // 4. Navigate after successful generation
     router.push({
       name: "StudyPlanView",
       params: {
@@ -130,6 +157,7 @@ const generatePlan = async (segment) => {
     segment.loading = false;
   }
 };
+
 
 onMounted(() => {
   generateSchedule();

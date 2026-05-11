@@ -2,41 +2,37 @@ package com.jhsup;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
+
+import org.springframework.ai.document.Document;
+import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.reader.tika.TikaDocumentReader;
+import org.springframework.ai.transformer.splitter.TokenTextSplitter;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.SimpleVectorStore;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
+import org.springframework.security.oauth2.core.user.OAuth2User;
+import org.springframework.stereotype.Service;
 
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.drive.Drive;
 import com.google.api.services.drive.model.FileList;
-import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
-import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
-import org.springframework.security.oauth2.core.user.OAuth2User;
-import org.springframework.stereotype.Service;
-import org.springframework.scheduling.annotation.Async;
-import org.springframework.ai.vectorstore.VectorStore;
-
-
-import org.springframework.ai.document.Document;
-import org.springframework.ai.reader.tika.TikaDocumentReader;
-import org.springframework.ai.transformer.splitter.TokenTextSplitter;
-import org.springframework.core.io.FileSystemResource;
-import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.vectorstore.SimpleVectorStore;
-
-
-import java.util.Map;
-import java.util.HashMap;
-import java.util.stream.Collectors;
-import org.springframework.ai.vectorstore.SearchRequest;
-
 
 //17106087
 @Service
 public class UserCreate {
 
     private final OAuth2AuthorizedClientService authorizedClientService;
-    private final EmbeddingModel embeddingModel; 
+    private final EmbeddingModel embeddingModel;
 
     public UserCreate(OAuth2AuthorizedClientService authorizedClientService, EmbeddingModel embeddingModel) {
         this.authorizedClientService = authorizedClientService;
@@ -81,8 +77,9 @@ public class UserCreate {
     // 2. Pull All Files
     // 2. Pull All Files
     private void pullFiles(OAuth2User principal, String userRootPath, String userId) throws Exception {
-        System.out.println("Starting Stage 2: Pulling Google Drive Files for " + principal.getAttribute("email") + "...");
-        
+        System.out
+                .println("Starting Stage 2: Pulling Google Drive Files for " + principal.getAttribute("email") + "...");
+
         // 1. Get the Google Access Token
         OAuth2AuthorizedClient client = authorizedClientService.loadAuthorizedClient("google", principal.getName());
         if (client == null || client.getAccessToken() == null) {
@@ -97,7 +94,7 @@ public class UserCreate {
                 request -> request.getHeaders().setAuthorization("Bearer " + accessToken))
                 .setApplicationName("Jarvis-Drive-Fetcher")
                 .build();
-        
+
         String pageToken = null;
         int fileCount = 0;
 
@@ -111,7 +108,7 @@ public class UserCreate {
 
             // We use the fully qualified name here to avoid clashing with java.io.File
             List<com.google.api.services.drive.model.File> driveFiles = result.getFiles();
-            
+
             if (driveFiles == null || driveFiles.isEmpty()) {
                 break; // No more files to process
             }
@@ -119,7 +116,7 @@ public class UserCreate {
             for (com.google.api.services.drive.model.File googleFile : driveFiles) {
                 String mimeType = googleFile.getMimeType();
 
-                if (!mimeType.contains("pdf") && !mimeType.contains("word") && !mimeType.contains("text")){
+                if (!mimeType.contains("pdf") && !mimeType.contains("word") && !mimeType.contains("text")) {
                     continue;
                 }
 
@@ -127,13 +124,14 @@ public class UserCreate {
 
                 // Create the exact local path for this file
                 File localDestination = new File(userRootPath + File.separator + folderName, googleFile.getName());
-                
+
                 // 5. Download the file bytes
                 try (FileOutputStream outputStream = new FileOutputStream(localDestination)) {
                     driveService.files().get(googleFile.getId()).executeMediaAndDownloadTo(outputStream);
                     fileCount++;
                 } catch (Exception e) {
-                    // Native Google Docs/Sheets throw an error here because they require a special "export" call.
+                    // Native Google Docs/Sheets throw an error here because they require a special
+                    // "export" call.
                     // We catch it so it skips the file without breaking the entire initialization.
                     System.err.println("Skipping file (likely native Google format): " + googleFile.getName());
                 }
@@ -142,18 +140,17 @@ public class UserCreate {
             // Get the token for the next 100 files
             pageToken = result.getNextPageToken();
 
-        } while (pageToken != null); 
-        
+        } while (pageToken != null);
+
         // 6. Write the completion marker to the hard drive
         new File(userRootPath, ".files_pulled").createNewFile();
         System.out.println("Stage 2 Complete: " + fileCount + " files successfully pulled and marker saved.");
     }
 
-
     // ==========================================
     // THE MASTER ASYNC PIPELINE
     // ==========================================
-    
+
     @Async
     public void runInitializationPipeline(OAuth2User principal) {
         String userId = principal.getAttribute("sub");
@@ -178,16 +175,16 @@ public class UserCreate {
 
         } catch (Exception e) {
             System.err.println("Pipeline failed: " + e.getMessage());
-            // Optional: You could create a ".error" file here if you want the frontend to show a red X
+            // Optional: You could create a ".error" file here if you want the frontend to
+            // show a red X
         }
     }
 
-
-
+    // 3. Vectorize
     // 3. Vectorize
     private void vectorizeDocuments(String userRootPath, String userId) throws Exception {
         System.out.println("Starting Stage 3: Vectorizing documents for user: " + userId);
-        
+
         File docsFolder = new File(userRootPath + File.separator + "Documents");
         File[] files = docsFolder.listFiles();
 
@@ -197,37 +194,54 @@ public class UserCreate {
             return;
         }
 
-        // 1. Create a brand new, isolated vector store JUST for this user
         SimpleVectorStore userVectorStore = new SimpleVectorStore(embeddingModel);
         File userVectorFile = new File(userRootPath, "vectors.json");
 
-        // 2. If they already have a vector file, load it first so we don't overwrite it
         if (userVectorFile.exists()) {
             userVectorStore.load(userVectorFile);
         }
 
         TokenTextSplitter chunker = new TokenTextSplitter(800, 350, 100, 10000, true);
 
-        for (File file : files) {
-            System.out.println("Processing: " + file.getName());
-            try {
-                TikaDocumentReader reader = new TikaDocumentReader(new FileSystemResource(file));
-                List<Document> rawDocuments = reader.get();
+        // --- PARALLEL PROCESSING SETUP ---
+        // Spawn a thread pool. 10 workers is a good starting point.
+        // If you are using Java 21+, you can use
+        // Executors.newVirtualThreadPerTaskExecutor() instead!
+        ExecutorService executor = Executors.newFixedThreadPool(3);
 
-                // Even with physical isolation, tagging metadata is still a good safety practice
-                for (Document doc : rawDocuments) {
-                    doc.getMetadata().put("fileName", file.getName());
-                }
+        System.out.println("Spawning workers to process " + files.length + " files in parallel...");
 
-                List<Document> chunkedDocuments = chunker.apply(rawDocuments);
-                
-                // Add to this specific user's temporary memory
-                userVectorStore.add(chunkedDocuments); 
-                
-            } catch (Exception e) {
-                System.err.println("Failed to vectorize file " + file.getName() + ": " + e.getMessage());
-            }
-        }
+        // Map each file to an asynchronous task
+        List<CompletableFuture<Void>> futures = Arrays.stream(files)
+                .map(file -> CompletableFuture.runAsync(() -> {
+                    System.out.println(
+                            "Processing: " + file.getName() + " on thread: " + Thread.currentThread().getName());
+                    try {
+                        TikaDocumentReader reader = new TikaDocumentReader(new FileSystemResource(file));
+                        List<Document> rawDocuments = reader.get();
+
+                        for (Document doc : rawDocuments) {
+                            doc.getMetadata().put("fileName", file.getName());
+                        }
+
+                        List<Document> chunkedDocuments = chunker.apply(rawDocuments);
+
+                        // SimpleVectorStore uses a ConcurrentHashMap internally, so concurrent adds are
+                        // generally safe.
+                        userVectorStore.add(chunkedDocuments);
+
+                    } catch (Exception e) {
+                        System.err.println("Failed to vectorize file " + file.getName() + ": " + e.getMessage());
+                    }
+                }, executor))
+                .collect(Collectors.toList());
+
+        // Wait for ALL worker threads to finish before moving on
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+        // Shut down the thread pool
+        executor.shutdown();
+        // ---------------------------------
 
         // 3. Save the memory down to their physical folder
         userVectorStore.save(userVectorFile);
@@ -238,25 +252,22 @@ public class UserCreate {
         System.out.println("Stage 3 Complete: Documents vectorized and marker saved.");
     }
 
-
-
     public String retrieveContext(String queryText, String userId) throws Exception {
-
 
         File userVectors = new File("user-data/" + userId + "/vectors.json");
 
         // if(!userVectorFile.exists()){
-        //     return "";
+        // return "";
         // }
 
-        try{
+        try {
             SimpleVectorStore userStore = new SimpleVectorStore(embeddingModel);
 
             userStore.load(userVectors);
 
             SearchRequest request = SearchRequest.query(queryText)
-                .withTopK(5);
-                // .withSimilarityThreshold(0.7);
+                    .withTopK(5);
+            // .withSimilarityThreshold(0.7);
 
             // 1. Change the call back to similaritySearch
             List<Document> similarDocs = userStore.similaritySearch(request);
@@ -266,8 +277,8 @@ public class UserCreate {
                 // In SimpleVectorStore, the key is usually "distance" or "similarityScore"
                 // Let's print the whole map to see exactly what's inside
                 System.out.println("Metadata keys: " + doc.getMetadata().keySet());
-                
-                Double score = (Double) doc.getMetadata().get("distance"); 
+
+                Double score = (Double) doc.getMetadata().get("distance");
                 System.out.println("Score: " + score + " | ID: " + doc.getId());
             });
 
@@ -281,6 +292,5 @@ public class UserCreate {
         }
 
     }
-
 
 }
