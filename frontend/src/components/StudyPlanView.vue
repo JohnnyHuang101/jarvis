@@ -649,7 +649,7 @@ const handleSsePayload = (item, eventName, payload, resolve) => {
   if (eventName === 'complete' || payload.state === 'READY') {
     item.html = marked.parse(payload.guide ?? '');
     item.status = 'ready';
-    if (!activeGuide.value) activeGuide.value = item;
+    // if (!activeGuide.value) activeGuide.value = item;
     resolve();
     return;
   }
@@ -728,9 +728,9 @@ const fetchStudyPlan = async () => {
           }
         })
       );
-      if (!activeGuide.value) {
-        activeGuide.value = guideItems.value.find(g => g.status === 'ready') ?? null;
-      }
+      // if (!activeGuide.value) {
+      //   activeGuide.value = guideItems.value.find(g => g.status === 'ready') ?? null;
+      // }
     }
 
     const missingEvents = events.filter(e => !cached.has(e.summary) && !isCelebration(e));
