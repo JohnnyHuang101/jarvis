@@ -320,6 +320,36 @@ const approvalPhaseBadgeLabel = computed(() => ({
   rejected:   'Rejected',
 }[approvalPhase.value] ?? ''));
 
+
+// Helper so both call-sites stay DRY
+const surfaceApproval = async () => {
+  const resumed = await checkExistingApproval();
+  if (!resumed) approvalPhase.value = 'idle';
+};
+
+// ── Check for a previously-created approval that's still pending ──────────────
+// Called after guides are confirmed ready so the approval section is visible.
+const checkExistingApproval = async () => {
+  try {
+    const res = await fetch(
+      `http://localhost:8080/api/users/courses/${encodeURIComponent(courseId)}/approvals/pending`,
+      { credentials: 'include' }
+    );
+
+    if (res.status === 204) return false;   // nothing pending — stay idle
+    if (!res.ok) return false;
+
+    const state = await res.json();
+    approvalId.value = state.approvalId;
+
+    // Rehydrate the review screen without re-running the agent
+    await loadApprovalState(state.approvalId);
+    return true;
+  } catch {
+    return false; // non-fatal — fall through to idle
+  }
+};
+
 // ── HITL Phase 1 — kick off the validation agent via SSE ─────────────────────
 const startValidation = async () => {
   approvalPhase.value   = 'validating';
@@ -653,10 +683,10 @@ const generateMissingGuides = async (eventsToGenerate) => {
     }
   } finally {
     isGenerating.value = false;
-    // Surface the approval section now that all guides are ready
-    approvalPhase.value = 'idle';
+    await surfaceApproval();          // ← resume existing or show idle
   }
 };
+
 
 // ── fetchStudyPlan (unchanged except the missing-guide approval surfacing) ─────
 const fetchStudyPlan = async () => {
@@ -710,7 +740,7 @@ const fetchStudyPlan = async () => {
       generateMissingGuides(missingEvents);
     } else {
       // All guides were already cached — surface approval immediately
-      approvalPhase.value = 'idle';
+      await surfaceApproval();
     }
 
   } catch (err) {

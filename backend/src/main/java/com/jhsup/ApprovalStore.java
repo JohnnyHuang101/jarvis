@@ -1,10 +1,5 @@
 package com.jhsup;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import org.springframework.stereotype.Component;
-
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -13,6 +8,12 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+
+import org.springframework.stereotype.Component;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 /**
  * ApprovalStore
@@ -23,12 +24,12 @@ import java.util.Optional;
  * crash during a write never leaves a half-written approval file.
  *
  * Directory layout:
- *   user-data/{userId}/courses/{courseId}/approvals/{approvalId}.json
+ * user-data/{userId}/courses/{courseId}/approvals/{approvalId}.json
  *
  * Thread safety:
- *   save() is synchronized on the file path string via intern().
- *   This prevents two threads writing the same approval ID concurrently
- *   (e.g., a double-click on the Approve button in the UI).
+ * save() is synchronized on the file path string via intern().
+ * This prevents two threads writing the same approval ID concurrently
+ * (e.g., a double-click on the Approve button in the UI).
  */
 @Component
 public class ApprovalStore {
@@ -50,7 +51,7 @@ public class ApprovalStore {
      * Safe to call from any thread at any time.
      */
     public void save(ApprovalState state) throws IOException {
-        File dir  = approvalDir(state.userId, state.courseId);
+        File dir = approvalDir(state.userId, state.courseId);
         dir.mkdirs();
 
         File target = new File(dir, state.approvalId + ".json");
@@ -78,7 +79,8 @@ public class ApprovalStore {
             String userId, String courseId, String approvalId) throws IOException {
 
         File f = new File(approvalDir(userId, courseId), approvalId + ".json");
-        if (!f.exists()) return Optional.empty();
+        if (!f.exists())
+            return Optional.empty();
 
         ApprovalState state = mapper.readValue(f, ApprovalState.class);
 
@@ -100,12 +102,14 @@ public class ApprovalStore {
             String userId, String courseId) throws IOException {
 
         File dir = approvalDir(userId, courseId);
-        if (!dir.exists()) return List.of();
+        if (!dir.exists())
+            return List.of();
 
         File[] files = dir.listFiles(
                 (d, name) -> name.endsWith(".json") && !name.endsWith(".tmp"));
 
-        if (files == null) return List.of();
+        if (files == null)
+            return List.of();
 
         List<ApprovalState> results = new ArrayList<>();
         for (File f : files) {
@@ -150,10 +154,18 @@ public class ApprovalStore {
                     "Approval " + approvalId + " is " + state.status + " and cannot be approved.");
         }
 
-        state.status    = ApprovalState.Status.APPROVED;
+        state.status = ApprovalState.Status.APPROVED;
         state.decidedAt = Instant.now();
         save(state);
         return state;
+    }
+
+    public Optional<ApprovalState> findLatestPending(
+            String userId, String courseId) throws IOException {
+
+        return listForCourse(userId, courseId).stream()
+                .filter(s -> s.status == ApprovalState.Status.PENDING)
+                .findFirst(); // listForCourse already sorts newest-first
     }
 
     /**
@@ -171,7 +183,7 @@ public class ApprovalStore {
                     "Approval " + approvalId + " is " + state.status + " and cannot be rejected.");
         }
 
-        state.status    = ApprovalState.Status.REJECTED;
+        state.status = ApprovalState.Status.REJECTED;
         state.decidedAt = Instant.now();
         save(state);
         return state;

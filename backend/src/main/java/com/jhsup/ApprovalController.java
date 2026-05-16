@@ -1,18 +1,5 @@
 package com.jhsup;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
-import org.springframework.security.oauth2.client.annotation.RegisteredOAuth2AuthorizedClient;
-import org.springframework.security.oauth2.core.user.OAuth2User;
-import org.springframework.web.bind.annotation.*;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
@@ -20,18 +7,41 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
+import org.springframework.security.oauth2.client.annotation.RegisteredOAuth2AuthorizedClient;
+import org.springframework.security.oauth2.core.user.OAuth2User;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 /**
  * ApprovalController — HITL three-phase workflow.
  *
- *   POST   /{courseId}/validate                   → Phase 1: agent SSE stream
- *   GET    /{courseId}/approvals/{id}             → Phase 2: review screen data
- *   GET    /{courseId}/approvals                  → list all for course
- *   POST   /{courseId}/approvals/{id}/approve     → Phase 3a: deterministic insert
- *   POST   /{courseId}/approvals/{id}/reject      → Phase 3b: no-op
+ * POST /{courseId}/validate → Phase 1: agent SSE stream
+ * GET /{courseId}/approvals/{id} → Phase 2: review screen data
+ * GET /{courseId}/approvals → list all for course
+ * POST /{courseId}/approvals/{id}/approve → Phase 3a: deterministic insert
+ * POST /{courseId}/approvals/{id}/reject → Phase 3b: no-op
  *
  * All event data is typed as AgenticService.CalendarEventRequest throughout.
  * The Google Calendar insert maps its fields directly.
@@ -40,19 +50,18 @@ import java.util.concurrent.Executors;
 @RequestMapping("/api/users/courses/{courseId}")
 public class ApprovalController {
 
-    private static final String GCAL_INSERT_URL =
-            "https://www.googleapis.com/calendar/v3/calendars/primary/events";
+    private static final String GCAL_INSERT_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
 
     private final ScheduleValidatorAgent agent;
-    private final ApprovalStore          store;
-    private final ObjectMapper           mapper;
-    private final HttpClient             http     = HttpClient.newBuilder()
+    private final ApprovalStore store;
+    private final ObjectMapper mapper;
+    private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10)).build();
-    private final ExecutorService        executor = Executors.newCachedThreadPool();
+    private final ExecutorService executor = Executors.newCachedThreadPool();
 
     public ApprovalController(ScheduleValidatorAgent agent, ApprovalStore store) {
-        this.agent  = agent;
-        this.store  = store;
+        this.agent = agent;
+        this.store = store;
         this.mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -69,8 +78,8 @@ public class ApprovalController {
      */
     record ValidateRequest(
             List<AgenticService.CalendarEventRequest> events,
-            List<String> availableGuides
-    ) {}
+            List<String> availableGuides) {
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // PHASE 1 — Validate
@@ -91,7 +100,7 @@ public class ApprovalController {
             return emitter;
         }
 
-        String userId      = principal.getAttribute("sub");
+        String userId = principal.getAttribute("sub");
         String accessToken = client.getAccessToken().getTokenValue();
 
         executor.submit(() -> {
@@ -99,16 +108,15 @@ public class ApprovalController {
                 sendSse(emitter, "status", Map.of("step", "INIT",
                         "message", "Initializing validator agent…"));
 
-                List<AgenticService.CalendarEventRequest> proposedEvents =
-                        body.events() != null ? body.events() : List.of();
+                List<AgenticService.CalendarEventRequest> proposedEvents = body.events() != null ? body.events()
+                        : List.of();
 
-                List<String> availableGuides =
-                        (body.availableGuides() != null && !body.availableGuides().isEmpty())
-                                ? body.availableGuides()
-                                : scanGuideNames(userId, courseId);
+                List<String> availableGuides = (body.availableGuides() != null && !body.availableGuides().isEmpty())
+                        ? body.availableGuides()
+                        : scanGuideNames(userId, courseId);
 
-                String        approvalId = UUID.randomUUID().toString();
-                ApprovalState state      = ApprovalState.pending(approvalId, userId, courseId, proposedEvents);
+                String approvalId = UUID.randomUUID().toString();
+                ApprovalState state = ApprovalState.pending(approvalId, userId, courseId, proposedEvents);
                 store.save(state); // persist immediately so approvalId is valid even if agent crashes
 
                 sendSse(emitter, "status", Map.of("step", "AGENT_START",
@@ -119,10 +127,9 @@ public class ApprovalController {
                 store.save(state);
 
                 sendSse(emitter, "complete", Map.of(
-                        "approvalId",    approvalId,
-                        "status",        "PENDING",
-                        "changeSummary", state.changeSummary != null ? state.changeSummary : List.of()
-                ));
+                        "approvalId", approvalId,
+                        "status", "PENDING",
+                        "changeSummary", state.changeSummary != null ? state.changeSummary : List.of()));
                 emitter.complete();
 
             } catch (Exception e) {
@@ -135,6 +142,20 @@ public class ApprovalController {
         return emitter;
     }
 
+    @GetMapping("/approvals/pending")
+    public ResponseEntity<?> getPendingApproval(
+            @AuthenticationPrincipal OAuth2User principal,
+            @PathVariable String courseId) throws IOException {
+
+        if (principal == null)
+            return ResponseEntity.status(401).build();
+
+        String userId = principal.getAttribute("sub");
+
+        return store.findLatestPending(userId, courseId)
+                .<ResponseEntity<?>>map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build()); // 204 → frontend stays idle
+    }
     // ─────────────────────────────────────────────────────────────────────────
     // PHASE 2 — Review
     // ─────────────────────────────────────────────────────────────────────────
@@ -145,7 +166,8 @@ public class ApprovalController {
             @PathVariable String courseId,
             @PathVariable String approvalId) throws IOException {
 
-        if (principal == null) return ResponseEntity.status(401).build();
+        if (principal == null)
+            return ResponseEntity.status(401).build();
         String userId = principal.getAttribute("sub");
         return store.load(userId, courseId, approvalId)
                 .map(ResponseEntity::ok)
@@ -157,7 +179,8 @@ public class ApprovalController {
             @AuthenticationPrincipal OAuth2User principal,
             @PathVariable String courseId) throws IOException {
 
-        if (principal == null) return ResponseEntity.status(401).build();
+        if (principal == null)
+            return ResponseEntity.status(401).build();
         return ResponseEntity.ok(store.listForCourse(principal.getAttribute("sub"), courseId));
     }
 
@@ -172,8 +195,9 @@ public class ApprovalController {
             @PathVariable String courseId,
             @PathVariable String approvalId) throws IOException, InterruptedException {
 
-        if (principal == null) return ResponseEntity.status(401).build();
-        String userId      = principal.getAttribute("sub");
+        if (principal == null)
+            return ResponseEntity.status(401).build();
+        String userId = principal.getAttribute("sub");
         String accessToken = client.getAccessToken().getTokenValue();
 
         ApprovalState state = store.approve(userId, courseId, approvalId);
@@ -203,7 +227,8 @@ public class ApprovalController {
             @PathVariable String courseId,
             @PathVariable String approvalId) throws IOException {
 
-        if (principal == null) return ResponseEntity.status(401).build();
+        if (principal == null)
+            return ResponseEntity.status(401).build();
         return ResponseEntity.ok(store.reject(principal.getAttribute("sub"), courseId, approvalId));
     }
 
@@ -215,17 +240,18 @@ public class ApprovalController {
      * Maps a CalendarEventRequest to the Google Calendar Events.insert payload.
      *
      * Field mapping:
-     *   event.summary()              → summary
-     *   event.description()          → description
-     *   event.location()             → location (if present)
-     *   event.start().dateTime()     → start.dateTime
-     *   event.start().timeZone()     → start.timeZone
-     *   event.end().dateTime()       → end.dateTime
-     *   event.end().timeZone()       → end.timeZone
-     *   event.recurrence()           → recurrence (if non-empty)
-     *   event.reminders()            → reminders
-     *   event.extendedProperties()   → extendedProperties.private (as private namespace)
-     *   event.extendedProperties().get("agent_type") → colorId
+     * event.summary() → summary
+     * event.description() → description
+     * event.location() → location (if present)
+     * event.start().dateTime() → start.dateTime
+     * event.start().timeZone() → start.timeZone
+     * event.end().dateTime() → end.dateTime
+     * event.end().timeZone() → end.timeZone
+     * event.recurrence() → recurrence (if non-empty)
+     * event.reminders() → reminders
+     * event.extendedProperties() → extendedProperties.private (as private
+     * namespace)
+     * event.extendedProperties().get("agent_type") → colorId
      */
     private String insertGoogleCalendarEvent(
             AgenticService.CalendarEventRequest event,
@@ -285,9 +311,9 @@ public class ApprovalController {
         // Color-code by agent_type so exams, sessions, and celebrations are distinct
         String agentType = ValidationTools.agentType(event);
         int colorId = switch (agentType) {
-            case "exam"         -> 11; // Tomato
-            case "celebration"  -> 2;  // Sage
-            default             -> 9;  // Blueberry (study_session / other)
+            case "exam" -> 11; // Tomato
+            case "celebration" -> 2; // Sage
+            default -> 9; // Blueberry (study_session / other)
         };
         gcalEvent.put("colorId", String.valueOf(colorId));
 
@@ -301,8 +327,7 @@ public class ApprovalController {
                 .timeout(Duration.ofSeconds(15))
                 .build();
 
-        HttpResponse<String> response =
-                http.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             throw new IOException("Calendar insert failed (" + response.statusCode()
@@ -319,9 +344,10 @@ public class ApprovalController {
     // ─────────────────────────────────────────────────────────────────────────
 
     private List<String> scanGuideNames(String userId, String courseId) {
-        File dir   = new File("user-data/" + userId + "/courses/" + courseId + "/guides");
+        File dir = new File("user-data/" + userId + "/courses/" + courseId + "/guides");
         String[] files = dir.list((d, name) -> name.endsWith(".md"));
-        if (files == null) return List.of();
+        if (files == null)
+            return List.of();
         return Arrays.stream(files).map(name -> name.replace(".md", "")).toList();
     }
 
@@ -329,6 +355,7 @@ public class ApprovalController {
         try {
             emitter.send(SseEmitter.event().name(eventName)
                     .data(mapper.writeValueAsString(data)));
-        } catch (IOException ignored) {}
+        } catch (IOException ignored) {
+        }
     }
 }

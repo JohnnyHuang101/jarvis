@@ -1,8 +1,5 @@
 package com.jhsup;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.stereotype.Component;
-
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -10,11 +7,22 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
+
+import org.springframework.stereotype.Component;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * ValidationTools
@@ -23,24 +31,25 @@ import java.util.stream.Collectors;
  *
  * CalendarEventRequest field mapping used throughout:
  *
- *   event.summary()                          → event title
- *   event.start().dateTime()                 → ISO-8601 start string
- *   event.end().dateTime()                   → ISO-8601 end string
- *   event.start().timeZone()                 → e.g. "America/Los_Angeles"
- *   event.extendedProperties().get("agent_type")   → "study_session" | "exam" | "celebration"
- *   event.extendedProperties().get("target_exam")  → exam summary this session prepares for
+ * event.summary() → event title
+ * event.start().dateTime() → ISO-8601 start string
+ * event.end().dateTime() → ISO-8601 end string
+ * event.start().timeZone() → e.g. "America/Los_Angeles"
+ * event.extendedProperties().get("agent_type") → "study_session" | "exam" |
+ * "celebration"
+ * event.extendedProperties().get("target_exam") → exam summary this session
+ * prepares for
  *
  * Focus duration is derived from end − start (no separate focusTime field).
  */
 @Component
 public class ValidationTools {
 
-    private static final int    BURNOUT_THRESHOLD_MINUTES = 360; // 6 hours
-    private static final String GCAL_FREEBUSY_URL =
-            "https://www.googleapis.com/calendar/v3/freeBusy";
+    private static final int BURNOUT_THRESHOLD_MINUTES = 360; // 6 hours
+    private static final String GCAL_FREEBUSY_URL = "https://www.googleapis.com/calendar/v3/freeBusy";
 
-    private final ObjectMapper mapper     = new ObjectMapper();
-    private final HttpClient   httpClient = HttpClient.newBuilder()
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
@@ -54,24 +63,21 @@ public class ValidationTools {
      * (guide file exists, no matching session).
      */
     public Map<String, Object> checkGuideMapping(
-            List<String> eventSummaries,
-            List<String> availableGuides) {
+            List<Map<String, String>> sessions, // [{summary, target_exam}, ...]
+            List<String> examSummaries) {
 
-        Set<String> normGuides  = availableGuides.stream().map(this::sanitise).collect(Collectors.toSet());
-        Set<String> normEvents  = eventSummaries.stream().map(this::sanitise).collect(Collectors.toSet());
+        Set<String> normExams = examSummaries.stream().map(this::sanitise).collect(Collectors.toSet());
 
-        List<String> missing  = normEvents.stream().filter(e -> !normGuides.contains(e)).toList();
-        List<String> orphaned = normGuides.stream().filter(g -> !normEvents.contains(g)).toList();
+        List<String> broken = sessions.stream()
+                .filter(s -> !normExams.contains(sanitise(s.get("target_exam"))))
+                .map(s -> s.get("summary") + " → target_exam '" + s.get("target_exam") + "' not found")
+                .toList();
 
-        String status = (missing.isEmpty() && orphaned.isEmpty()) ? "OK" : "MISMATCH";
         return Map.of(
-                "status",   status,
-                "missing",  missing,
-                "orphaned", orphaned,
-                "detail",   status.equals("OK")
-                        ? "Every study session has a corresponding guide."
-                        : "See missing/orphaned lists for required corrections."
-        );
+                "status", broken.isEmpty() ? "OK" : "MISMATCH",
+                "broken", broken,
+                "detail", broken.isEmpty() ? "All sessions link to a valid exam."
+                        : broken.size() + " session(s) have a bad target_exam.");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -80,7 +86,8 @@ public class ValidationTools {
 
     /**
      * Calls the Google Calendar FreeBusy API for [startTime, endTime].
-     * The start/end strings come directly from CalendarEventRequest.start().dateTime()
+     * The start/end strings come directly from
+     * CalendarEventRequest.start().dateTime()
      * and CalendarEventRequest.end().dateTime().
      */
     public Map<String, Object> checkCalendarConflicts(
@@ -92,8 +99,7 @@ public class ValidationTools {
             String jsonBody = mapper.writeValueAsString(Map.of(
                     "timeMin", startTime,
                     "timeMax", endTime,
-                    "items",   List.of(Map.of("id", "primary"))
-            ));
+                    "items", List.of(Map.of("id", "primary"))));
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(GCAL_FREEBUSY_URL))
@@ -103,8 +109,7 @@ public class ValidationTools {
                     .timeout(Duration.ofSeconds(15))
                     .build();
 
-            HttpResponse<String> response =
-                    httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
                 return Map.of("status", "ERROR",
@@ -116,21 +121,19 @@ public class ValidationTools {
             Map<String, Object> body = mapper.readValue(response.body(), Map.class);
 
             @SuppressWarnings("unchecked")
-            List<Object> busySlots =
-                    (List<Object>) ((Map<String, Object>)
-                            ((Map<String, Object>) body.getOrDefault("calendars", Map.of()))
-                                    .getOrDefault("primary", Map.of()))
-                            .getOrDefault("busy", List.of());
+            List<Object> busySlots = (List<Object>) ((Map<String, Object>) ((Map<String, Object>) body
+                    .getOrDefault("calendars", Map.of()))
+                    .getOrDefault("primary", Map.of()))
+                    .getOrDefault("busy", List.of());
 
             boolean isBusy = !busySlots.isEmpty();
             return Map.of(
-                    "status",    "OK",
-                    "busy",      isBusy,
+                    "status", "OK",
+                    "busy", isBusy,
                     "busySlots", busySlots,
-                    "detail",    isBusy
+                    "detail", isBusy
                             ? busySlots.size() + " conflict(s) in [" + startTime + ", " + endTime + "]"
-                            : "Time slot is free."
-            );
+                            : "Time slot is free.");
 
         } catch (IOException | InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -147,34 +150,35 @@ public class ValidationTools {
     /**
      * Verifies chronological sanity using the actual CalendarEventRequest fields:
      *
-     *   • event type   → extendedProperties.get("agent_type")
-     *                    ("study_session" | "exam" | "celebration")
-     *   • target exam  → extendedProperties.get("target_exam")
-     *   • start time   → start().dateTime()
+     * • event type → extendedProperties.get("agent_type")
+     * ("study_session" | "exam" | "celebration")
+     * • target exam → extendedProperties.get("target_exam")
+     * • start time → start().dateTime()
      *
      * Invariants checked:
-     *   1. Every study_session must start before the exam it targets.
-     *   2. No event may start in the past.
+     * 1. Every study_session must start before the exam it targets.
+     * 2. No event may start in the past.
      */
     public Map<String, Object> analyzeTemporalLogic(
             List<AgenticService.CalendarEventRequest> events) {
 
         List<String> violations = new ArrayList<>();
-        Instant      now        = Instant.now();
+        Instant now = Instant.now();
 
         // Index exam start times by their summary (lower-cased)
         Map<String, Instant> examTimes = new HashMap<>();
         for (AgenticService.CalendarEventRequest event : events) {
             if ("exam".equals(agentType(event)) && event.summary() != null) {
-                Instant t = parseInstant(startDateTime(event));
-                if (t != null) examTimes.put(event.summary().toLowerCase().trim(), t);
+                Instant t = parseInstant(startDateTime(event), event.start().timeZone());
+                if (t != null)
+                    examTimes.put(event.summary().toLowerCase().trim(), t);
             }
         }
 
         for (AgenticService.CalendarEventRequest event : events) {
-            String  type      = agentType(event);
-            String  summary   = event.summary();
-            Instant startTime = parseInstant(startDateTime(event));
+            String type = agentType(event);
+            String summary = event.summary();
+            Instant startTime = parseInstant(startDateTime(event), event.start().timeZone());
 
             if (startTime == null) {
                 violations.add("Event '" + summary + "' has an unparseable start.dateTime.");
@@ -189,7 +193,7 @@ public class ValidationTools {
                     if (examTime != null && !startTime.isBefore(examTime)) {
                         violations.add(String.format(
                                 "TEMPORAL VIOLATION: '%s' starts at %s which is NOT before " +
-                                "its target exam '%s' at %s.",
+                                        "its target exam '%s' at %s.",
                                 summary, startTime, targetExam, examTime));
                     }
                 }
@@ -204,13 +208,12 @@ public class ValidationTools {
         }
 
         return Map.of(
-                "status",     violations.isEmpty() ? "OK" : "VIOLATIONS_FOUND",
+                "status", violations.isEmpty() ? "OK" : "VIOLATIONS_FOUND",
                 "violations", violations,
-                "examCount",  examTimes.size(),
-                "detail",     violations.isEmpty()
+                "examCount", examTimes.size(),
+                "detail", violations.isEmpty()
                         ? "All " + events.size() + " events pass temporal logic checks."
-                        : violations.size() + " violation(s) require correction."
-        );
+                        : violations.size() + " violation(s) require correction.");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -226,25 +229,28 @@ public class ValidationTools {
     public Map<String, Object> checkBurnoutLimits(
             List<AgenticService.CalendarEventRequest> events) {
 
-        Map<String, Integer>      dailyMinutes    = new TreeMap<>();
+        Map<String, Integer> dailyMinutes = new TreeMap<>();
         Map<String, List<String>> dailyEventNames = new TreeMap<>();
 
         for (AgenticService.CalendarEventRequest event : events) {
             String rawStart = startDateTime(event);
-            String rawEnd   = endDateTime(event);
-            if (rawStart == null) continue;
+            String rawEnd = endDateTime(event);
+            if (rawStart == null)
+                continue;
 
-            Instant startInstant = parseInstant(rawStart);
-            Instant endInstant   = rawEnd != null ? parseInstant(rawEnd) : null;
-            if (startInstant == null) continue;
+            Instant startInstant = parseInstant(rawStart, event.start().timeZone());
+            Instant endInstant = rawEnd != null ? parseInstant(rawEnd, event.start().timeZone()) : null;
+            if (startInstant == null)
+                continue;
 
             // Duration in minutes from start → end; default 60 min if end missing
             int durationMinutes = endInstant != null
                     ? (int) ChronoUnit.MINUTES.between(startInstant, endInstant)
                     : 60;
-            if (durationMinutes <= 0) durationMinutes = 60;
+            if (durationMinutes <= 0)
+                durationMinutes = 60;
 
-            String day     = startInstant.toString().substring(0, 10); // "yyyy-MM-dd"
+            String day = startInstant.toString().substring(0, 10); // "yyyy-MM-dd"
             String summary = event.summary() != null ? event.summary() : "Unnamed";
 
             dailyMinutes.merge(day, durationMinutes, Integer::sum);
@@ -252,33 +258,33 @@ public class ValidationTools {
         }
 
         List<Map<String, Object>> overloadedDays = new ArrayList<>();
-        List<Map<String, Object>> allDays        = new ArrayList<>();
+        List<Map<String, Object>> allDays = new ArrayList<>();
 
         for (Map.Entry<String, Integer> entry : dailyMinutes.entrySet()) {
-            String  day     = entry.getKey();
-            int     minutes = entry.getValue();
-            boolean over    = minutes > BURNOUT_THRESHOLD_MINUTES;
+            String day = entry.getKey();
+            int minutes = entry.getValue();
+            boolean over = minutes > BURNOUT_THRESHOLD_MINUTES;
 
             Map<String, Object> dayInfo = new HashMap<>();
-            dayInfo.put("date",         day);
+            dayInfo.put("date", day);
             dayInfo.put("totalMinutes", minutes);
-            dayInfo.put("totalHours",   String.format("%.1fh", minutes / 60.0));
-            dayInfo.put("overLimit",    over);
-            dayInfo.put("events",       dailyEventNames.get(day));
+            dayInfo.put("totalHours", String.format("%.1fh", minutes / 60.0));
+            dayInfo.put("overLimit", over);
+            dayInfo.put("events", dailyEventNames.get(day));
 
             allDays.add(dayInfo);
-            if (over) overloadedDays.add(dayInfo);
+            if (over)
+                overloadedDays.add(dayInfo);
         }
 
         return Map.of(
-                "status",         overloadedDays.isEmpty() ? "OK" : "BURNOUT_RISK",
+                "status", overloadedDays.isEmpty() ? "OK" : "BURNOUT_RISK",
                 "thresholdHours", BURNOUT_THRESHOLD_MINUTES / 60,
                 "overloadedDays", overloadedDays,
-                "allDays",        allDays,
-                "detail",         overloadedDays.isEmpty()
+                "allDays", allDays,
+                "detail", overloadedDays.isEmpty()
                         ? "No day exceeds the 6-hour study limit."
-                        : overloadedDays.size() + " day(s) exceed the limit and must be rescheduled."
-        );
+                        : overloadedDays.size() + " day(s) exceed the limit and must be rescheduled.");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -299,7 +305,8 @@ public class ValidationTools {
     static String agentType(AgenticService.CalendarEventRequest e) {
         if (e.extendedProperties() != null) {
             String t = e.extendedProperties().get("agent_type");
-            if (t != null && !t.isBlank()) return t;
+            if (t != null && !t.isBlank())
+                return t;
         }
         // Treat focusTime events as study sessions when metadata is missing
         return "focusTime".equals(e.eventType()) ? "study_session" : "other";
@@ -317,16 +324,28 @@ public class ValidationTools {
     // ─────────────────────────────────────────────────────────────────────────
 
     private String sanitise(String name) {
-        if (name == null) return "";
+        if (name == null)
+            return "";
         return name.replaceAll("[\\\\/:*?\"<>|]", "_").trim().toLowerCase();
     }
 
-    private Instant parseInstant(String raw) {
-        if (raw == null || raw.isBlank()) return null;
-        try { return ZonedDateTime.parse(raw, DateTimeFormatter.ISO_DATE_TIME).toInstant(); }
-        catch (Exception e) {
-            try { return Instant.parse(raw); }
-            catch (Exception ignored) { return null; }
+    private Instant parseInstant(String raw, String tzId) {
+        if (raw == null || raw.isBlank())
+            return null;
+        // Try with offset first
+        try {
+            return ZonedDateTime.parse(raw, DateTimeFormatter.ISO_DATE_TIME).toInstant();
+        } catch (Exception ignored) {
+        }
+        // Try as LocalDateTime + named zone
+        try {
+            ZoneId zone = (tzId != null && !tzId.isBlank())
+                    ? ZoneId.of(tzId)
+                    : ZoneId.of("America/Los_Angeles");
+            return LocalDateTime.parse(raw, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+                    .atZone(zone).toInstant();
+        } catch (Exception ignored) {
+            return null;
         }
     }
 }
