@@ -62,21 +62,26 @@ public class ValidationTools {
      * Returns missing entries (session exists, no guide file) and orphaned ones
      * (guide file exists, no matching session).
      */
-    public Map<String, Object> checkGuideMapping(
-            List<Map<String, String>> sessions, // [{summary, target_exam}, ...]
-            List<String> examSummaries) {
+    public Map<String, Object> checkGuideMapping(List<AgenticService.CalendarEventRequest> currentEvents) {
 
-        Set<String> normExams = examSummaries.stream().map(this::sanitise).collect(Collectors.toSet());
+        // 1. Find all exams currently in the backend state
+        Set<String> normExams = currentEvents.stream()
+                .filter(e -> "exam".equals(agentType(e)))
+                .map(e -> sanitise(e.summary()))
+                .collect(Collectors.toSet());
 
-        List<String> broken = sessions.stream()
-                .filter(s -> !normExams.contains(sanitise(s.get("target_exam"))))
-                .map(s -> s.get("summary") + " → target_exam '" + s.get("target_exam") + "' not found")
+        // 2. Check if any study sessions point to a missing exam
+        List<String> broken = currentEvents.stream()
+                .filter(e -> "study_session".equals(agentType(e)))
+                .filter(e -> !normExams.contains(sanitise(targetExam(e))))
+                .map(e -> e.summary() + " → target_exam '" + targetExam(e) + "' not found")
                 .toList();
 
         return Map.of(
                 "status", broken.isEmpty() ? "OK" : "MISMATCH",
                 "broken", broken,
-                "detail", broken.isEmpty() ? "All sessions link to a valid exam."
+                "detail", broken.isEmpty()
+                        ? "All sessions link to a valid exam."
                         : broken.size() + " session(s) have a bad target_exam.");
     }
 
@@ -95,10 +100,24 @@ public class ValidationTools {
             String endTime,
             String accessToken) {
 
+        // 1. Defend against LLM JSON formatting mistakes
+        if (startTime == null || endTime == null) {
+            return Map.of("status", "ERROR", "detail",
+                    "Missing 'start_time' or 'end_time' inside the 'arguments' object. Please format your JSON correctly.");
+        }
+
         try {
+            Instant safeStart = parseInstant(startTime, "America/Los_Angeles");
+            Instant safeEnd = parseInstant(endTime, "America/Los_Angeles");
+
+            // 2. Defend against garbage date strings
+            if (safeStart == null || safeEnd == null) {
+                return Map.of("status", "ERROR", "detail", "Could not parse dates. Must be ISO-8601 format.");
+            }
+
             String jsonBody = mapper.writeValueAsString(Map.of(
-                    "timeMin", startTime,
-                    "timeMax", endTime,
+                    "timeMin", safeStart.toString(),
+                    "timeMax", safeEnd.toString(),
                     "items", List.of(Map.of("id", "primary"))));
 
             HttpRequest request = HttpRequest.newBuilder()
@@ -348,4 +367,322 @@ public class ValidationTools {
             return null;
         }
     }
+
+    public void sortEventsChronologically(List<AgenticService.CalendarEventRequest> events) {
+        events.sort((e1, e2) -> {
+            try {
+                Instant start1 = parseInstant(e1.start().dateTime(), e1.start().timeZone());
+                Instant start2 = parseInstant(e2.start().dateTime(), e2.start().timeZone());
+                if (start1 == null || start2 == null)
+                    return 0;
+                return start1.compareTo(start2);
+            } catch (Exception ex) {
+                return 0;
+            }
+        });
+    }
+
+    public Map<String, Object> findOpenTimeSlots(
+            String searchStartIso,
+            String searchEndIso,
+            int minDurationMinutes,
+            String accessToken) {
+
+        try {
+            // 1. Fetch busy data from Google
+            Instant searchStart = parseInstant(searchStartIso, "America/Los_Angeles");
+            Instant searchEnd = parseInstant(searchEndIso, "America/Los_Angeles");
+
+            String jsonBody = mapper.writeValueAsString(Map.of(
+                    "timeMin", searchStart.toString(),
+                    "timeMax", searchEnd.toString(),
+                    "items", List.of(Map.of("id", "primary"))));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(GCAL_FREEBUSY_URL))
+                    .header("Authorization", "Bearer " + accessToken)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .timeout(Duration.ofSeconds(15))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                return Map.of("status", "ERROR", "detail", "GCal API returned " + response.statusCode());
+            }
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> body = mapper.readValue(response.body(), Map.class);
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, String>> busySlots = (List<Map<String, String>>) ((Map<String, Object>) ((Map<String, Object>) body
+                    .getOrDefault("calendars", Map.of()))
+                    .getOrDefault("primary", Map.of()))
+                    .getOrDefault("busy", List.of());
+
+            // 3. Convert busy slots to Instant intervals and sort them chronologically
+            record Interval(Instant start, Instant end) {
+            }
+
+            List<Interval> busyIntervals = busySlots.stream()
+                    .map(slot -> new Interval(
+                            ZonedDateTime.parse(slot.get("start"), DateTimeFormatter.ISO_DATE_TIME).toInstant(),
+                            ZonedDateTime.parse(slot.get("end"), DateTimeFormatter.ISO_DATE_TIME).toInstant()))
+                    // Ensure we only care about overlaps within our search window
+                    .map(i -> new Interval(
+                            i.start().isBefore(searchStart) ? searchStart : i.start(),
+                            i.end().isAfter(searchEnd) ? searchEnd : i.end()))
+                    .sorted((a, b) -> a.start().compareTo(b.start()))
+                    .toList();
+
+            // 4. Merge overlapping or touching busy intervals
+            List<Interval> mergedBusy = new ArrayList<>();
+            for (Interval current : busyIntervals) {
+                if (mergedBusy.isEmpty()) {
+                    mergedBusy.add(current);
+                } else {
+                    Interval lastMerged = mergedBusy.get(mergedBusy.size() - 1);
+                    if (!current.start().isAfter(lastMerged.end())) {
+                        // They overlap or touch; merge them by taking the max end time
+                        Instant maxEnd = current.end().isAfter(lastMerged.end()) ? current.end() : lastMerged.end();
+                        mergedBusy.set(mergedBusy.size() - 1, new Interval(lastMerged.start(), maxEnd));
+                    } else {
+                        mergedBusy.add(current);
+                    }
+                }
+            }
+
+            // 5. Invert busy intervals to find free gaps
+            List<Map<String, Object>> freeSlots = new ArrayList<>();
+            Instant currentPointer = searchStart;
+
+            for (Interval busy : mergedBusy) {
+                if (currentPointer.isBefore(busy.start())) {
+                    long gapMinutes = ChronoUnit.MINUTES.between(currentPointer, busy.start());
+                    if (gapMinutes >= minDurationMinutes) {
+                        freeSlots.add(Map.of(
+                                "start", currentPointer.toString(),
+                                "end", busy.start().toString(),
+                                "durationMinutes", gapMinutes));
+                    }
+                }
+                currentPointer = busy.end().isAfter(currentPointer) ? busy.end() : currentPointer;
+            }
+
+            // Check the final gap after the last busy block until searchEnd
+            if (currentPointer.isBefore(searchEnd)) {
+                long gapMinutes = ChronoUnit.MINUTES.between(currentPointer, searchEnd);
+                if (gapMinutes >= minDurationMinutes) {
+                    freeSlots.add(Map.of(
+                            "start", currentPointer.toString(),
+                            "end", searchEnd.toString(),
+                            "durationMinutes", gapMinutes));
+                }
+            }
+
+            return Map.of(
+                    "status", "OK",
+                    "freeSlots", freeSlots,
+                    "detail", freeSlots.isEmpty()
+                            ? "No contiguous free time found matching criteria."
+                            : "Found " + freeSlots.size() + " available time slots.");
+
+        } catch (Exception e) {
+            return Map.of("status", "ERROR", "detail", "Failed to calculate open slots: " + e.getMessage());
+        }
+    }
+
+    public Map<String, Object> replaceEvent(
+            List<AgenticService.CalendarEventRequest> currentEvents,
+            String oldSummary,
+            AgenticService.CalendarEventRequest newEvent) {
+
+        boolean found = false;
+        for (int i = 0; i < currentEvents.size(); i++) {
+            if (currentEvents.get(i).summary().equalsIgnoreCase(oldSummary.trim())) {
+                currentEvents.set(i, newEvent);
+                found = true;
+                break; // Replace the first match
+            }
+        }
+
+        if (!found) {
+            return Map.of("status", "ERROR", "detail", "Could not find event with summary: " + oldSummary);
+        }
+        return Map.of("status", "OK", "detail", "Successfully replaced '" + oldSummary + "'.");
+    }
+
+    /**
+     * Adds a completely new event (like a 15-minute break).
+     */
+    public Map<String, Object> addEvent(
+            List<AgenticService.CalendarEventRequest> currentEvents,
+            AgenticService.CalendarEventRequest newEvent) {
+
+        currentEvents.add(newEvent);
+        return Map.of("status", "OK", "detail", "Successfully added new event: " + newEvent.summary());
+    }
+
+    /**
+     * Deletes an event.
+     */
+    public Map<String, Object> deleteEvent(
+            List<AgenticService.CalendarEventRequest> currentEvents,
+            String summaryToDelete) {
+
+        boolean removed = currentEvents.removeIf(e -> e.summary().equalsIgnoreCase(summaryToDelete.trim()));
+
+        if (!removed) {
+            return Map.of("status", "ERROR", "detail", "Could not find event to delete: " + summaryToDelete);
+        }
+        return Map.of("status", "OK", "detail", "Successfully deleted '" + summaryToDelete + "'.");
+    }
+
+    public Map<String, Object> getScheduleSummary(List<AgenticService.CalendarEventRequest> currentEvents) {
+        List<String> simplifiedList = currentEvents.stream()
+                .map(e -> String.format("[%s] '%s' : %s -> %s",
+                        agentType(e).toUpperCase(),
+                        e.summary(),
+                        startDateTime(e),
+                        endDateTime(e)))
+                .toList();
+
+        return Map.of("status", "OK", "current_schedule", simplifiedList);
+    }
+
+    public Map<String, Object> shiftAllEventDates(
+            List<AgenticService.CalendarEventRequest> currentEvents,
+            int daysToShift) {
+
+        List<AgenticService.CalendarEventRequest> shiftedList = new ArrayList<>();
+
+        for (var event : currentEvents) {
+            if (event.start() == null || event.start().dateTime() == null)
+                continue;
+
+            // Parse current times
+            Instant start = Instant.parse(parseInstant(event.start().dateTime(), event.start().timeZone()).toString());
+            Instant end = event.end() != null && event.end().dateTime() != null
+                    ? Instant.parse(parseInstant(event.end().dateTime(), event.start().timeZone()).toString())
+                    : start.plus(1, ChronoUnit.HOURS);
+
+            // Add the day offset
+            Instant newStart = start.plus(daysToShift, ChronoUnit.DAYS);
+            Instant newEnd = end.plus(daysToShift, ChronoUnit.DAYS);
+
+            shiftedList.add(new AgenticService.CalendarEventRequest(
+                    event.summary(),
+                    event.description(),
+                    event.location(),
+                    new AgenticService.CalendarEventRequest.Time(newStart.toString(), event.start().timeZone()),
+                    new AgenticService.CalendarEventRequest.Time(newEnd.toString(), event.end().timeZone()),
+                    event.recurrence(),
+                    event.reminders(),
+                    event.eventType(),
+                    event.extendedProperties()));
+        }
+
+        currentEvents.clear();
+        currentEvents.addAll(shiftedList);
+
+        return Map.of("status", "OK", "detail",
+                "Successfully shifted all calendar events forward by " + daysToShift + " days.");
+    }
+
+    public Map<String, Object> rescheduleToTargetDate(
+            List<AgenticService.CalendarEventRequest> currentEvents,
+            String targetDateIso) {
+
+        if (currentEvents.isEmpty()) {
+            return Map.of("status", "ERROR", "detail", "No events to shift.");
+        }
+
+        try {
+            // 1. Parse the target date the LLM wants
+            Instant targetInstant = parseInstant(targetDateIso, "America/Los_Angeles");
+
+            // 2. Find the earliest event currently in the schedule
+            Instant earliestInstant = Instant.MAX;
+            for (var event : currentEvents) {
+                Instant start = parseInstant(event.start().dateTime(), event.start().timeZone());
+                if (start != null && start.isBefore(earliestInstant)) {
+                    earliestInstant = start;
+                }
+            }
+
+            // 3. Calculate the exact days delta in Java!
+            long daysToShift = ChronoUnit.DAYS.between(earliestInstant, targetInstant);
+
+            // 4. Reuse your existing shift logic
+            return shiftAllEventDates(currentEvents, (int) daysToShift);
+
+        } catch (Exception e) {
+            return Map.of("status", "ERROR", "detail", "Invalid target date format. Use ISO-8601.");
+        }
+    }
+
+    public class BatchTools {
+
+        public record BatchOperation(
+                // Must be "ADD", "REPLACE", or "DELETE"
+                String operationType,
+
+                // The title of the old event to find (Required for REPLACE and DELETE)
+                String targetSummary,
+
+                // The new event details (Required for ADD and REPLACE)
+                AgenticService.CalendarEventRequest newEvent) {
+        }
+
+        public record BatchRequest(
+                List<BatchOperation> operations) {
+        }
+    }
+
+    public Map<String, Object> batchMutateEvents(
+            List<AgenticService.CalendarEventRequest> currentEvents,
+            List<BatchTools.BatchOperation> operations) {
+
+        if (operations == null || operations.isEmpty()) {
+            return Map.of("status", "ERROR", "detail", "No operations provided.");
+        }
+
+        List<String> executionLogs = new ArrayList<>();
+        int successCount = 0;
+
+        for (int i = 0; i < operations.size(); i++) {
+            BatchTools.BatchOperation op = operations.get(i);
+
+            try {
+                switch (op.operationType().toUpperCase()) {
+                    case "ADD" -> {
+                        addEvent(currentEvents, op.newEvent());
+                        executionLogs.add("Successfully added: " + op.newEvent().summary());
+                        successCount++;
+                    }
+                    case "REPLACE" -> {
+                        replaceEvent(currentEvents, op.targetSummary(), op.newEvent());
+                        executionLogs.add("Successfully replaced: " + op.targetSummary());
+                        successCount++;
+                    }
+                    case "DELETE" -> {
+                        deleteEvent(currentEvents, op.targetSummary());
+                        executionLogs.add("Successfully deleted: " + op.targetSummary());
+                        successCount++;
+                    }
+                    default -> executionLogs
+                            .add("Error at index " + i + ": Unknown operation type '" + op.operationType() + "'");
+                }
+            } catch (Exception e) {
+                executionLogs.add("Error executing " + op.operationType() + " at index " + i + ": " + e.getMessage());
+            }
+        }
+
+        return Map.of(
+                "status", successCount == operations.size() ? "OK" : "PARTIAL_SUCCESS",
+                "detail", "Processed " + operations.size() + " operations.",
+                "executionLogs", executionLogs);
+    }
+
 }

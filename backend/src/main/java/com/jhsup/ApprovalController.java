@@ -20,7 +20,9 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
 import org.springframework.security.oauth2.client.annotation.RegisteredOAuth2AuthorizedClient;
+import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -33,6 +35,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.springframework.http.HttpStatus;
 
 /**
  * ApprovalController — HITL three-phase workflow.
@@ -58,13 +61,16 @@ public class ApprovalController {
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10)).build();
     private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final OAuth2AuthorizedClientService authorizedClientService;
 
-    public ApprovalController(ScheduleValidatorAgent agent, ApprovalStore store) {
+    public ApprovalController(ScheduleValidatorAgent agent, ApprovalStore store,
+            OAuth2AuthorizedClientService authorizedClientService) {
         this.agent = agent;
         this.store = store;
         this.mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        this.authorizedClientService = authorizedClientService;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -86,21 +92,31 @@ public class ApprovalController {
     // ─────────────────────────────────────────────────────────────────────────
 
     @PostMapping(value = "/validate", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter validate(
-            @AuthenticationPrincipal OAuth2User principal,
-            @RegisteredOAuth2AuthorizedClient("google") OAuth2AuthorizedClient client,
+    public ResponseEntity<SseEmitter> validate(
+            OAuth2AuthenticationToken authentication, // <-- Only need this
             @PathVariable String courseId,
             @RequestBody ValidateRequest body) {
 
-        SseEmitter emitter = new SseEmitter(300_000L);
-
-        if (principal == null) {
-            sendSse(emitter, "error", Map.of("message", "Unauthorized"));
-            emitter.complete();
-            return emitter;
+        // 1. Immediately reject completely unauthenticated users
+        if (authentication == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        String userId = principal.getAttribute("sub");
+        // 2. Manually load the Google client (THIS FIXES YOUR ERROR)
+        OAuth2AuthorizedClient client = authorizedClientService.loadAuthorizedClient(
+                authentication.getAuthorizedClientRegistrationId(),
+                authentication.getName());
+
+        // 3. Reject if the Google token is missing or expired
+        if (client == null || client.getAccessToken() == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        // 4. Otherwise, proceed with the SSE connection
+        SseEmitter emitter = new SseEmitter(300_000L);
+
+        // Extract the variables you need safely
+        String userId = authentication.getPrincipal().getAttribute("sub");
         String accessToken = client.getAccessToken().getTokenValue();
 
         executor.submit(() -> {
@@ -117,16 +133,35 @@ public class ApprovalController {
 
                 String approvalId = UUID.randomUUID().toString();
                 ApprovalState state = ApprovalState.pending(approvalId, userId, courseId, proposedEvents);
-                store.save(state); // persist immediately so approvalId is valid even if agent crashes
+                // store.save(state); // persist immediately so approvalId is valid even if
+                // agent crashes
 
                 sendSse(emitter, "status", Map.of("step", "AGENT_START",
-                        "message", "Agent running tool checks…",
+                        "message", "Agent loop beginning...",
                         "approvalId", approvalId));
 
-                state = agent.run(state, availableGuides, accessToken);
+                String dummyPreferences = "I prefer to study in the evenings, and I need a 15 minute break every hour.";
+
+                state = agent.run(
+                        state,
+                        availableGuides,
+                        accessToken,
+                        dummyPreferences,
+                        // This lambda gets called every time progressCallback.accept() runs!
+                        step -> {
+                            try {
+                                emitter.send(SseEmitter.event().name("agent_step").data(step));
+                            } catch (IOException e) {
+                                // The user closed their browser tab.
+                                throw new RuntimeException("Client disconnected");
+                            }
+                        });
+
                 store.save(state);
 
-                sendSse(emitter, "complete", Map.of(
+                System.out.println("State saved and agent finished running");
+
+                sendSse(emitter, "complete!", Map.of(
                         "approvalId", approvalId,
                         "status", "PENDING",
                         "changeSummary", state.changeSummary != null ? state.changeSummary : List.of()));
@@ -139,7 +174,7 @@ public class ApprovalController {
             }
         });
 
-        return emitter;
+        return ResponseEntity.ok(emitter);
     }
 
     @GetMapping("/approvals/pending")
@@ -197,6 +232,7 @@ public class ApprovalController {
 
         if (principal == null)
             return ResponseEntity.status(401).build();
+
         String userId = principal.getAttribute("sub");
         String accessToken = client.getAccessToken().getTokenValue();
 

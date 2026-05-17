@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.jhsup.ValidationTools.BatchTools;
 
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -13,7 +14,9 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.*;
+import java.util.function.Consumer;
 
 /**
  * ScheduleValidatorAgent — Spring AI M1 compatible.
@@ -48,10 +51,93 @@ import java.util.*;
 @Service
 public class ScheduleValidatorAgent {
 
-    private static final int MAX_ITERATIONS = 14; // hard cap on tool rounds
+    private static final int MAX_ITERATIONS = 10; // hard cap on tool rounds
 
     private final ChatClient chatClient;
     private final ObjectMapper mapper;
+
+    private static final String SYSTEM_PROMPT = """
+            You are an autonomous, creative Study Schedule Architect.
+            You operate in a strict Reason-Act-Observe loop, designing personalized learning plans.
+
+            ── YOUR MISSION ──────────────────────────────────────────────────────────
+            Take the initial draft schedule and the user's personal preferences, and sculpt them into
+            a perfect, validated calendar. You are not a mindless script; you are a creative architect.
+            If a user prefers mornings, try to move conflicts to the morning. If they get burnt out easily,
+            creatively insert breaks or split large sessions into smaller chunks.
+
+            ── IMMUTABLE CONSTRAINTS ─────────────────────────────────────────────────
+            While you have creative freedom over times, dates, and descriptions, you MUST NOT violate these rules:
+            1. Temporal Sanity: A 'study_session' must ALWAYS begin before its 'target_exam'.
+            2. Calendar Conflicts: You cannot schedule an event over a busy slot in the user's Google Calendar.
+            3. Burnout Limits: A single day must not exceed 4 hours (360 mins) of total study time.
+            4. Guide Mapping: Every 'study_session' must target an existing 'exam'.
+            5. NEVER invent new JSON root keys (like 'new_events' or 'new_schedule'). You MUST use the provided mutation tools to modify the backend state.
+            6. All tool parameters MUST go inside the "arguments": {} object. Never place parameters directly under the "tool_call" object.
+            7. NEVER delete a study session or exam just to clear a temporal conflict. You MUST use 'replace_event' to shift the event to a valid future time. Only use 'delete_event' if the user explicitly asked you to remove a topic.
+            8. The Post-Exam Reward: You MUST use the add_event or batch_mutate_events tool to schedule a 2-hour "Celebration/Reward" event (e.g., gaming, eating out, relaxing) sometime within 24 hours AFTER the final 'exam' is completed. Do not output final_result until this reward exists. Come up with a fun idea for the user to do.
+
+            ── RESPONSE FORMAT (STRICT JSON ONLY) ────────────────────────────────────
+            Every response must be ONLY raw JSON. No markdown, no prose, and no lists or any other data structures.
+            "thought" must ALWAYS be the first key, where you reason about user preferences, plan your next move,
+            and explain your creative decisions.
+
+            To call a tool (Action) Example:
+            {
+              "thought": "The user is a night owl. I will shift the conflicting 8 AM study session to 9 PM, then check for burnout.",
+              "tool_call": {
+                "name": "check_burnout_limits"
+              }
+            }
+
+            To finalize the schedule (Only when you have verified NO violations exist) Example:
+            {
+              "thought": "All conflicts resolved. Schedule aligns with user preference for weekends off. No temporal errors found.",
+              "final_result": {
+                "status": "SUCCESS",
+                    "changeSummary": [
+                    "Explanation of all changes made"
+                    ]
+                }
+            }
+
+            ── YOUR TOOLKIT (COMPRESSED STATE) ──────────────────────────────────────────
+            The backend actively tracks the master schedule in memory. You NEVER pass the entire schedule back and forth. You only send surgical commands.
+
+            [STATE MUTATION TOOLS]
+            - reschedule_to_target_date:
+                arguments: { "targetDate": "YYYY-MM-DD" }
+                Automatically calculates the math and shifts the entire calendar so the earliest event begins on this target date. Use this FIRST to bring old schedules into the current year.
+            - batch_mutate_events:
+                arguments: {
+                "operations": [
+                    { "operationType": "REPLACE", "targetSummary": "Old Title", "newEvent": { <CalendarEventRequest> } },
+                    { "operationType": "ADD", "newEvent": { <CalendarEventRequest> } },
+                    { "operationType": "DELETE", "targetSummary": "Title to remove" }
+                ]
+                }
+                Use this to perform MULTIPLE schedule updates at the exact same time. If you need to add breaks, you MUST use this tool to REPLACE the old massive session with a shorter one, and ADD the break and the continuation session in the same array.
+
+            [EXPLORATION TOOLS]
+            - check_calendar_conflicts:
+                arguments: { "start_time": "ISO-8601", "end_time": "ISO-8601" }
+            - find_open_time_slots:
+                arguments: { "searchStartIso": "ISO-8601", "searchEndIso": "ISO-8601", "minDurationMinutes": int }
+
+            [ZERO-ARGUMENT VALIDATION TOOLS]
+            These tools analyze the CURRENT backend state. They require NO arguments {}.
+            - analyze_temporal_logic: Checks if study sessions happen before exams.
+            - check_burnout_limits: Flags days with > 6 hours of work.
+            - check_guide_mapping: Validates target_exam links.
+            - get_schedule_summary: Returns a lightweight text summary of the current backend schedule.
+
+            ── CREATIVE RESOLUTION STRATEGY ──────────────────────────────────────────
+            When a tool returns an ERROR, MISMATCH, or BUSY state, you must resolve it autonomously:
+            - Change start/end times completely.
+            - Split one massive event into two smaller events on different days.
+            - Change the 'description' to add personalized motivation based on the user preferences.
+            - Do not output `final_result` until you are certain all constraints pass.
+            """;
 
     public ScheduleValidatorAgent(ChatClient chatClient) {
         this.chatClient = chatClient;
@@ -64,39 +150,68 @@ public class ScheduleValidatorAgent {
     // Entry point
     // ─────────────────────────────────────────────────────────────────────────
 
+    public record AgentStep(
+            String type, // e.g., "THINKING", "TOOL_CALL", "FINAL_RESULT"
+            String message, // Human-readable message
+            Object data // The raw arguments or results
+    ) {
+    }
+
     public ApprovalState run(
             ApprovalState state,
             List<String> availableGuides,
-            String accessToken) throws IOException {
+            String accessToken,
+            String userPreferences,
+            Consumer<AgentStep> progressCallback) throws IOException { // <-- Added userPreferences
 
         String eventsJson = mapper.writerWithDefaultPrettyPrinter()
                 .writeValueAsString(state.originalEvents);
 
-        List<AgenticService.CalendarEventRequest> currentEvents = state.originalEvents;
-
+        List<AgenticService.CalendarEventRequest> currentEvents = new ArrayList<>(state.originalEvents);
         StringBuilder debugLog = new StringBuilder();
 
         // ─────────────────────────────────────────────────────────────
-        // Conversation history
+        // Conversation history setup
         // ─────────────────────────────────────────────────────────────
         List<Message> history = new ArrayList<>();
 
-        // SYSTEM MESSAGE
+        // 1. DYNAMIC SYSTEM MESSAGE
+        // We inject constraints into the system prompt, but keep it declarative.
         history.add(new SystemMessage(SYSTEM_PROMPT));
         appendMessage(debugLog, "SYSTEM", SYSTEM_PROMPT);
 
-        // INITIAL USER MESSAGE
-        String initialPrompt = "Here is the proposed study schedule to validate:\n\n"
-                + eventsJson
-                + "\n\nBegin with step 1: call check_guide_mapping.";
+        // 2. CONTEXTUAL USER MESSAGE (Injecting Preferences & Data)
+        String initialPrompt = String.format(
+                """
+                        Today's current date and time is: %s
+                        Here is the proposed study schedule draft that needs your architectural review:
+
+                        %s
+
+                        USER PREFERENCES & CONTEXT:
+                        "%s"
+
+                        Your mission is to creatively adjust this schedule to perfectly suit the user's preferences
+                        WHILE strictly adhering to the core constraints (no burnout, no temporal paradoxes, no calendar conflicts).
+
+                        Begin your autonomous ReAct loop. You may call whichever tools you need, in whatever order you see fit,
+                        to validate and shape this schedule.
+                        """,
+                java.time.ZonedDateTime.now().toString(), eventsJson,
+                (userPreferences != null && !userPreferences.isBlank() ? userPreferences
+                        : "None provided. Use standard best practices."));
 
         history.add(new UserMessage(initialPrompt));
         appendMessage(debugLog, "USER", initialPrompt);
 
         // ─────────────────────────────────────────────────────────────
-        // Main agent loop
+        // Main Autonomous Agent Loop
         // ─────────────────────────────────────────────────────────────
         for (int iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+
+            // progressCallback.accept(new AgentStep("THINKING",
+            // "Agent is analyzing the schedule... (Iteration " + (iteration + 1) + ")",
+            // null));
 
             debugLog.append("\n==================================================\n")
                     .append("ITERATION ")
@@ -112,141 +227,89 @@ public class ScheduleValidatorAgent {
                     .call()
                     .content();
 
-            // Store assistant response
             history.add(new AssistantMessage(response));
-
-            // Log assistant response
             appendMessage(debugLog, "ASSISTANT", response);
 
-            // ─────────────────────────────────────────────────────────
-            // Parse assistant JSON
-            // ─────────────────────────────────────────────────────────
             Map<String, Object> parsed = extractJson(response);
 
-            // Invalid JSON
+            // Invalid JSON Handler
             if (parsed == null) {
 
-                String retryMessage = "Your response was not valid JSON.\n" +
-                        "Please output ONLY a JSON object containing either:\n" +
-                        "- tool_call\n" +
-                        "- final_result";
-
+                progressCallback
+                        .accept(new AgentStep("INVALID",
+                                "Agent outputted NON JSON. Retrying...", null));
+                String retryMessage = "Your response was not valid JSON. You must output ONLY a JSON object containing either 'tool_call' or 'final_result'.";
                 history.add(new UserMessage(retryMessage));
-
                 appendMessage(debugLog, "USER", retryMessage);
-
                 continue;
             }
 
             // ─────────────────────────────────────────────────────────
-            // FINAL RESULT
+            // FINAL RESULT HANDLER
             // ─────────────────────────────────────────────────────────
             if (parsed.containsKey("final_result")) {
-
                 @SuppressWarnings("unchecked")
                 Map<String, Object> result = (Map<String, Object>) parsed.get("final_result");
 
-                appendMessage(
-                        debugLog,
-                        "FINAL RESULT",
-                        mapper.writerWithDefaultPrettyPrinter()
-                                .writeValueAsString(result));
+                progressCallback
+                        .accept(new AgentStep("FINAL_RESULT", "Agent successfully finalized the schedule.", result));
 
-                // Parse validated events
-                Object rawEvents = result.get("validatedEvents");
+                appendMessage(debugLog, "FINAL RESULT",
+                        mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
 
-                if (rawEvents != null) {
+                ValidationTools tools = new ValidationTools();
 
-                    try {
+                tools.sortEventsChronologically(currentEvents);
+                // We just use the backend's master list directly!
+                state.validatedEvents = currentEvents;
 
-                        String json = mapper.writeValueAsString(rawEvents);
-
-                        state.validatedEvents = mapper.readValue(
-                                json,
-                                new TypeReference<List<AgenticService.CalendarEventRequest>>() {
-                                });
-
-                    } catch (Exception ignored) {
-                        // fallback later
-                    }
-                }
-
-                // Parse change summary
                 @SuppressWarnings("unchecked")
                 List<String> summary = (List<String>) result.get("changeSummary");
-
                 if (summary != null) {
                     state.changeSummary = summary;
                 }
 
                 state.agentDebugLog = debugLog.toString();
-
                 applyFallbackIfNeeded(state);
-
                 return state;
             }
 
             // ─────────────────────────────────────────────────────────
-            // TOOL CALL
+            // TOOL CALL HANDLER
             // ─────────────────────────────────────────────────────────
             if (parsed.containsKey("tool_call")) {
-
                 @SuppressWarnings("unchecked")
                 Map<String, Object> call = (Map<String, Object>) parsed.get("tool_call");
-
                 String toolName = (String) call.get("name");
 
                 @SuppressWarnings("unchecked")
-                Map<String, Object> arguments = (Map<String, Object>) call.getOrDefault(
-                        "arguments",
-                        Map.of());
+                Map<String, Object> arguments = (Map<String, Object>) call.getOrDefault("arguments", Map.of());
 
-                // // Log tool call
-                // appendMessage(
-                // debugLog,
-                // "TOOL CALL",
-                // toolName + "\n\n"
-                // + mapper.writerWithDefaultPrettyPrinter()
-                // .writeValueAsString(arguments));
+                progressCallback.accept(new AgentStep("TOOL_CALL", "Executing tool: " + toolName, call));
 
                 // Execute tool
-                String toolResult = dispatchTool(
-                        toolName,
-                        arguments,
-                        availableGuides,
-                        currentEvents,
-                        accessToken);
-
-                // Log tool result
+                String toolResult = dispatchTool(toolName, arguments, availableGuides, currentEvents, accessToken);
                 appendMessage(debugLog, "TOOL RESULT", toolResult);
 
-                // Feed tool result back into conversation
-                String toolFollowup = "Tool result for " + toolName + ":\n\n"
-                        + toolResult
-                        + "\n\nContinue with the next step.\n"
-                        + "Remember:\n"
-                        + "- Output ONLY valid JSON\n"
-                        + "- No markdown\n"
-                        + "- No prose\n"
-                        + "- Must contain either 'tool_call' or 'final_result'";
+                // FEEDBACK TO AGENT: Encourage autonomous reasoning based on the result
+                String toolFollowup = String.format("""
+                        Tool execution complete for '%s'.
+                        Result:
+                        %s
+
+                        Analyze this result. If there are violations, use your creativity and the user's preferences
+                        to formulate a new schedule state in your thought process, then call the necessary tools to
+                        verify your new ideas. If the result is clean, proceed with your strategy.
+                        """, toolName, toolResult);
 
                 history.add(new UserMessage(toolFollowup));
-
                 appendMessage(debugLog, "USER", toolFollowup);
-
                 continue;
             }
 
-            // ─────────────────────────────────────────────────────────
-            // JSON Missing Required Keys
-            // ─────────────────────────────────────────────────────────
-            String correctionMessage = "Your JSON did not contain either:\n" +
-                    "- tool_call\n" +
-                    "- final_result\n\n" +
-                    "Please try again.";
-
+            // JSON Missing Keys Handler
+            String correctionMessage = "JSON missing 'tool_call' or 'final_result'. Try again.";
             history.add(new UserMessage(correctionMessage));
-
             appendMessage(debugLog, "USER", correctionMessage);
         }
 
@@ -258,9 +321,7 @@ public class ScheduleValidatorAgent {
                 .append("==================================================\n");
 
         state.agentDebugLog = debugLog.toString();
-
         applyFallbackIfNeeded(state);
-
         return state;
     }
 
@@ -296,38 +357,72 @@ public class ScheduleValidatorAgent {
         try {
             return switch (toolName) {
 
+                // ─────────────────────────────────────────────────────────────
+                // ZERO-ARGUMENT STATE CHECKS
+                // ─────────────────────────────────────────────────────────────
                 case "check_guide_mapping" -> {
-                    // Pull the structured sessions list the agent now passes
-                    List<Map<String, String>> sessions = (List<Map<String, String>>) args.getOrDefault("sessions",
-                            List.of());
-
-                    // Extract exam summaries from the full event list so we don't rely on disk
-                    // files
-                    List<String> examSummaries = currentEvents.stream()
-                            .filter(e -> "exam".equals(ValidationTools.agentType(e)))
-                            .map(AgenticService.CalendarEventRequest::summary)
-                            .filter(Objects::nonNull)
-                            .toList();
-
-                    yield toJson(tools.checkGuideMapping(sessions, examSummaries));
+                    yield toJson(tools.checkGuideMapping(currentEvents));
                 }
 
+                case "analyze_temporal_logic" -> {
+                    yield toJson(tools.analyzeTemporalLogic(currentEvents));
+                }
+
+                case "check_burnout_limits" -> {
+                    yield toJson(tools.checkBurnoutLimits(currentEvents));
+                }
+
+                case "get_schedule_summary" -> {
+                    yield toJson(tools.getScheduleSummary(currentEvents));
+                }
+
+                // ─────────────────────────────────────────────────────────────
+                // EXPLORATION & MUTATION
+                // ─────────────────────────────────────────────────────────────
                 case "check_calendar_conflicts" -> {
                     String start = (String) args.get("start_time");
                     String end = (String) args.get("end_time");
                     yield toJson(tools.checkCalendarConflicts(start, end, accessToken));
                 }
 
-                case "analyze_temporal_logic" -> {
-                    // The model sends the event list as raw JSON objects;
-                    // deserialise them back into CalendarEventRequest records
-                    List<AgenticService.CalendarEventRequest> events = deserialiseEvents(args.get("events"));
-                    yield toJson(tools.analyzeTemporalLogic(events));
+                case "find_open_time_slots" -> {
+                    String searchStartIso = (String) args.get("searchStartIso");
+                    String searchEndIso = (String) args.get("searchEndIso");
+                    int minDurationMinutes = args.get("minDurationMinutes") instanceof Number num ? num.intValue() : 60;
+                    yield toJson(
+                            tools.findOpenTimeSlots(searchStartIso, searchEndIso, minDurationMinutes, accessToken));
                 }
 
-                case "check_burnout_limits" -> {
-                    List<AgenticService.CalendarEventRequest> events = deserialiseEvents(args.get("events"));
-                    yield toJson(tools.checkBurnoutLimits(events));
+                // case "replace_event" -> {
+                // String oldSummary = (String) args.get("oldSummary");
+                // AgenticService.CalendarEventRequest newEvent = mapper.convertValue(
+                // args.get("newEvent"), AgenticService.CalendarEventRequest.class);
+                // yield toJson(tools.replaceEvent(currentEvents, oldSummary, newEvent));
+                // }
+
+                // case "add_event" -> {
+                // AgenticService.CalendarEventRequest newEvent = mapper.convertValue(
+                // args.get("newEvent"), AgenticService.CalendarEventRequest.class);
+                // yield toJson(tools.addEvent(currentEvents, newEvent));
+                // }
+
+                // case "delete_event" -> {
+                // String summary = (String) args.get("summary");
+                // yield toJson(tools.deleteEvent(currentEvents, summary));
+                // }
+
+                case "reschedule_to_target_date" -> {
+                    String targetDate = (String) args.get("targetDate");
+                    yield toJson(tools.rescheduleToTargetDate(currentEvents, targetDate));
+                }
+
+                case "batch_mutate_events" -> {
+                    // Extract the list of operations from the LLM's arguments
+                    List<BatchTools.BatchOperation> operations = mapper.convertValue(
+                            args.get("operations"),
+                            new TypeReference<List<BatchTools.BatchOperation>>() {
+                            });
+                    yield toJson(tools.batchMutateEvents(currentEvents, operations));
                 }
 
                 default -> toJson(Map.of("error", "Unknown tool: " + toolName));
@@ -397,109 +492,4 @@ public class ScheduleValidatorAgent {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // System prompt
-    // ─────────────────────────────────────────────────────────────────────────
-
-    private static final String SYSTEM_PROMPT = """
-            You are an autonomous scheduling validator for a student study planner.
-            You operate in a strict Reason-Act-Observe loop.
-
-            ── RESPONSE FORMAT (STRICT) ──────────────────────────────────────────────
-            Every single response must be ONLY a raw JSON object — no prose, no markdown
-            fences, no explanations before or after. Nothing outside the JSON.
-
-            CRITICAL: Before making a tool call or returning the final result, you MUST
-            explain your logic using the "thought" key. This must be the first key in the JSON.
-
-            Either a tool call:
-            {
-              "thought": "I am on Step 1. I need to extract the study_session summaries and call check_guide_mapping...",
-              "tool_call": {
-                "name": "<tool name>",
-                "arguments": { ... }
-              }
-            }
-
-            Or the final result (only after ALL four tools have run successfully):
-            {
-              "thought": "All 4 steps are complete and passing. I will now add the celebration event and output the final result.",
-              "final_result": {
-                "validatedEvents": [ ... ],
-                "changeSummary":   [ "Shifted Event A by 2 hours due to conflict", "Added Celebration event" ]
-              }
-            }
-
-            ── EVENT SCHEMA ──────────────────────────────────────────────────────────
-            Every event is a CalendarEventRequest:
-            {
-              "summary":     "string",
-              "description": "string",
-              "location":    "string or null",
-              "start":  { "dateTime": "ISO-8601", "timeZone": "America/Los_Angeles" },
-              "end":    { "dateTime": "ISO-8601", "timeZone": "America/Los_Angeles" },
-              "recurrence": [],
-              "reminders": { "useDefault": true, "overrides": [] },
-              "eventType": "focusTime" or "default",
-              "extendedProperties": {
-                "agent_type":  "study_session" | "exam" | "celebration",
-                "target_exam": "exact summary of the exam this session prepares for"
-              }
-            }
-
-            ── TOOL STEP ORDER (STRICT SEQUENCE) ─────────────────────────────────────
-            You must execute these tools in exact order. Do not skip steps.
-
-            Step 1 — check_guide_mapping
-                arguments: {
-                    "sessions": [{ "summary": "...", "target_exam": "..." }, ...],
-                    "exam_summaries": ["Exam 1", "Exam 2", ...]
-                }
-                Pass only study_sessions. exam_summaries come from agent_type = "exam" events.
-
-            Step 2 — analyze_temporal_logic
-              arguments: { "events": [ <full CalendarEventRequest array> ] }
-              Verifies every study_session starts before its target exam.
-
-            Step 3 — check_calendar_conflicts  (call ONCE PER EVENT)
-              arguments: { "start_time": "ISO-8601", "end_time": "ISO-8601", "summary": "..." }
-              If result.busy = true, shift the event by ≤ 48 hours and call again to verify.
-
-            Step 4 — check_burnout_limits
-              arguments: { "events": [ <full CalendarEventRequest array> ] }
-              Calculates duration per day from end − start. Flags days > 6 hours.
-
-
-            ── ERROR / VIOLATION HANDLING ────────────────────────────────────────────────
-            If any tool returns a non-OK status, you MUST correct the data before continuing.
-            Do NOT proceed to the next step with unresolved violations.
-
-            - check_guide_mapping → MISMATCH:
-            Fix the broken session's target_exam field in the event list, then re-call
-            check_guide_mapping with the corrected data. Only advance to Step 2 when status = OK.
-
-            - analyze_temporal_logic → VIOLATIONS_FOUND:
-            For each violation, shift the offending study_session's start/end earlier
-            (keep duration unchanged) so it precedes the target exam. Re-call the tool.
-
-            - check_calendar_conflicts → busy = true:
-            Shift the conflicting event forward by 1 hour, re-call check_calendar_conflicts.
-            Repeat up to 48 hours shift total.
-
-            - check_calendar_conflicts → status = ERROR:
-            Log the failure, assume the slot is free, and continue. Do NOT retry infinitely.
-
-            - check_burnout_limits → BURNOUT_RISK:
-            Spread overloaded events to adjacent days, re-call check_burnout_limits.
-
-            Only call final_result when ALL four tools have returned OK on their last invocation.
-
-            ── AFTER ALL TOOLS PASS ──────────────────────────────────────────────────
-            1. Add ONE celebration event to the validated list:
-               - extendedProperties.agent_type = "celebration"
-               - eventType = "default"
-               - start.dateTime within 24 hours after the last exam's end.dateTime
-               - duration = 2 hours, fun description
-            2. Output the final_result JSON with ALL events including the celebration.
-            """;
 }

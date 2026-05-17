@@ -356,19 +356,21 @@ const startValidation = async () => {
   approvalError.value   = '';
   validationSteps.value = [];
 
-  // Push the step immediately so the UI shows something
+  // Keep track of the currently active step so we can mark it "done" when the next one arrives
+  let activeStepIdx = -1;
+
   const addStep = (message) => {
     validationSteps.value.push({ id: Date.now(), message, done: false });
     return validationSteps.value.length - 1;
   };
+  
   const completeStep = (idx) => {
     if (validationSteps.value[idx]) validationSteps.value[idx].done = true;
   };
 
-  const idx0 = addStep('Connecting to validator agent…');
+  activeStepIdx = addStep('Connecting to validator agent…');
 
   try {
-    // Build the available guide names list from what's already on screen
     const availableGuides = guideItems.value
       .filter(g => g.status === 'ready')
       .map(g => g.name);
@@ -380,19 +382,25 @@ const startValidation = async () => {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          events:          studyEvents.value,
+          events: studyEvents.value,
           availableGuides,
         }),
       }
     );
 
+    if (res.status === 401) {
+      window.location.href = 'http://localhost:8080/oauth2/authorization/google';
+      return; 
+    }
+
     if (!res.ok || !res.body) {
       throw new Error(`Validation request failed (${res.status})`);
     }
 
-    completeStep(idx0);
+    // Complete the "Connecting..." step
+    completeStep(activeStepIdx);
 
-    // ── Parse the SSE stream from ApprovalController.validate() ──────────
+    // ── Parse the SSE stream ──────────────────────────
     const reader  = res.body.getReader();
     const decoder = new TextDecoder();
     let buf             = '';
@@ -414,43 +422,56 @@ const startValidation = async () => {
           try {
             const payload = JSON.parse(line.slice(5).trim());
 
+            // 1. Handle Status Events
             if (lastEventName === 'status') {
-              // Map backend step names to human-readable labels
               const stepLabels = {
                 INIT:        'Initializing validator…',
                 AGENT_START: 'Agent calling validation tools…',
               };
               const label = stepLabels[payload.step] ?? payload.message ?? payload.step;
-              addStep(label);
+              
+              if (activeStepIdx !== -1) completeStep(activeStepIdx);
+              activeStepIdx = addStep(label);
             }
 
+            // 2. Handle the NEW Agent Step Events
+            if (lastEventName === 'agent_step') {
+              // Mark the previous tool/step as complete
+              if (activeStepIdx !== -1) completeStep(activeStepIdx);
+              
+              // Add the new step from the agent's message (e.g. "Executing tool: batch_mutate_events")
+              activeStepIdx = addStep(payload.message);
+            }
+
+            // 3. Handle Completion
             if (lastEventName === 'complete') {
-              // Agent finished — move to review phase
+              if (activeStepIdx !== -1) completeStep(activeStepIdx); // Finish the final step
+              
               approvalId.value  = payload.approvalId;
               streamDone        = true;
 
-              // Fetch the full ApprovalState to get the diff + validated events
               await loadApprovalState(payload.approvalId);
             }
 
+            // 4. Handle Errors
             if (lastEventName === 'error') {
+              if (activeStepIdx !== -1) completeStep(activeStepIdx);
               throw new Error(payload.message ?? 'Agent error');
             }
+            
           } catch (parseErr) {
-            if (parseErr.message !== 'Agent error') {
-              // JSON parse error — skip the line
-            } else {
+            if (parseErr.message === 'Agent error') {
               throw parseErr;
             }
           }
-          lastEventName = 'status';
+          lastEventName = 'status'; // Reset for next event block
         }
       }
     }
   } catch (err) {
     console.error('[validation]', err);
     approvalError.value = err.message ?? 'Validation failed.';
-    approvalPhase.value = 'idle'; // let the user retry
+    approvalPhase.value = 'idle'; 
   }
 };
 
