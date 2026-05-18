@@ -16,6 +16,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -35,7 +36,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import org.springframework.http.HttpStatus;
 
 /**
  * ApprovalController — HITL three-phase workflow.
@@ -161,7 +161,7 @@ public class ApprovalController {
 
                 System.out.println("State saved and agent finished running");
 
-                sendSse(emitter, "complete!", Map.of(
+                sendSse(emitter, "complete", Map.of(
                         "approvalId", approvalId,
                         "status", "PENDING",
                         "changeSummary", state.changeSummary != null ? state.changeSummary : List.of()));

@@ -451,6 +451,7 @@ const startValidation = async () => {
               streamDone        = true;
 
               await loadApprovalState(payload.approvalId);
+              approvalPhase.value = 'review';
             }
 
             // 4. Handle Errors
