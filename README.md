@@ -1,12 +1,3 @@
-* data collection and scouting --> google api
-* preprocessing and data splicing & pipeline to connect to LLM and database--> langchain, openai API
-* vector embeddings and agent configs w/ multi modal processing capabilities --> openai API
-* backend controllers for server hosting and other scripts --> springboot, maven, java
-* frontend files server and dynamic chat layout --> ReactJS, NodeJS, Vite, typescript
-* vector database --> custom Qdrant database, docker
-
-
-
 
 
 Jarvis is a full-stack Spring Boot and React application built around a Human-in-the-Loop (HITL) Agentic Workflow. It leverages Large Language Models (LLMs) to intelligently schedule study sessions, while enforcing strict deterministic execution for external API mutations.
