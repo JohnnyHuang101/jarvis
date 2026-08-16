@@ -1,4 +1,4 @@
-
+**Please see my website for updated specs and demo**
 
 Jarvis is a full-stack Spring Boot and React application built around a Human-in-the-Loop (HITL) Agentic Workflow. It leverages Large Language Models (LLMs) to intelligently schedule study sessions, while enforcing strict deterministic execution for external API mutations.
 
